@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智能旅游规划 Agent 编排平台 - 前端原型</title>
+  <style>
+    :root {
+      --bg-top: #fbfdff;
+      --bg-mid: #edf8ff;
+      --bg-bottom: #cfeeff;
+      --text-main: #123246;
+      --text-soft: #5f7b8f;
+      --text-light: #8aa1b3;
+      --card: rgba(255, 255, 255, 0.72);
+      --card-strong: rgba(255, 255, 255, 0.88);
+      --blue: #55b8ff;
+      --cyan: #6ee7f8;
+      --indigo: #7c8cff;
+      --green: #66d6a1;
+      --orange: #ffc46b;
+      --shadow-blue: rgba(78, 168, 230, 0.22);
+      --shadow-soft: rgba(41, 91, 122, 0.09);
+      --radius-xl: 32px;
+      --radius-lg: 24px;
+      --radius-pill: 999px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at 16% 16%, rgba(123, 210, 255, 0.38), transparent 34%),
+        radial-gradient(circle at 84% 10%, rgba(187, 202, 255, 0.26), transparent 32%),
+        radial-gradient(circle at 70% 92%, rgba(98, 221, 236, 0.28), transparent 36%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 42%, var(--bg-bottom) 100%);
+      overflow-x: hidden;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: auto;
+      pointer-events: none;
+      z-index: -1;
+      border-radius: 50%;
+      filter: blur(10px);
+      opacity: 0.9;
+      animation: drift 13s ease-in-out infinite alternate;
+    }
+
+    body::before {
+      width: 520px;
+      height: 520px;
+      left: -180px;
+      top: 160px;
+      background: radial-gradient(circle, rgba(137, 218, 255, 0.32), transparent 68%);
+    }
+
+    body::after {
+      width: 600px;
+      height: 600px;
+      right: -230px;
+      bottom: -110px;
+      background: radial-gradient(circle, rgba(150, 185, 255, 0.26), transparent 68%);
+      animation-delay: -4s;
+    }
+
+    @keyframes drift {
+      from { transform: translate3d(0, 0, 0) scale(1); }
+      to { transform: translate3d(34px, -22px, 0) scale(1.05); }
+    }
+
+    .app-shell {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 24px 0 56px;
+    }
+
+    .water-nav {
+      position: sticky;
+      top: 18px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 14px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.56);
+      backdrop-filter: blur(22px) saturate(150%);
+      -webkit-backdrop-filter: blur(22px) saturate(150%);
+      box-shadow:
+        0 18px 46px rgba(62, 141, 198, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.78);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-left: 8px;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.96), rgba(218,244,255,.82)),
+        radial-gradient(circle at 32% 22%, #80dcff, transparent 52%);
+      box-shadow:
+        0 16px 32px rgba(85, 184, 255, 0.25),
+        inset 0 1px 0 rgba(255,255,255,.95);
+      font-size: 21px;
+    }
+
+    .brand h1 {
+      font-size: 16px;
+      margin: 0;
+      letter-spacing: -0.02em;
+    }
+
+    .brand span {
+      display: block;
+      color: var(--text-light);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .nav-tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px;
+      border-radius: var(--radius-pill);
+      background: rgba(227, 246, 255, 0.52);
+    }
+
+    .nav-tabs button {
+      border: 0;
+      cursor: pointer;
+      color: var(--text-soft);
+      padding: 11px 16px;
+      border-radius: var(--radius-pill);
+      background: transparent;
+      font-weight: 650;
+      transition: transform .25s ease, background .25s ease, color .25s ease, box-shadow .25s ease;
+    }
+
+    .nav-tabs button:hover {
+      transform: translateY(-1px);
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.54);
+    }
+
+    .nav-tabs button.active {
+      color: #0f5e8e;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 10px 28px rgba(66, 158, 216, 0.18);
+    }
+
+    .nav-cta {
+      border: 0;
+      cursor: pointer;
+      border-radius: var(--radius-pill);
+      padding: 13px 18px;
+      font-weight: 750;
+      color: #ffffff;
+      background: linear-gradient(135deg, #50b8ff, #6d7dff);
+      box-shadow: 0 16px 30px rgba(71, 142, 240, 0.26);
+      transition: transform .25s ease, box-shadow .25s ease;
+    }
+
+    .nav-cta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 20px 38px rgba(71, 142, 240, 0.32);
+    }
+
+    .hero {
+      position: relative;
+      min-height: 590px;
+      display: grid;
+      align-items: center;
+      padding: 88px 0 42px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.02fr .98fr;
+      gap: 34px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 13px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.6);
+      box-shadow: 0 12px 36px rgba(79, 155, 206, 0.14);
+      color: #2474a5;
+      font-size: 13px;
+      font-weight: 750;
+      backdrop-filter: blur(16px);
+    }
+
+    .hero h2 {
+      margin: 22px 0 18px;
+      font-size: clamp(42px, 7vw, 76px);
+      line-height: 0.98;
+      letter-spacing: -0.075em;
+    }
+
+    .hero h2 .shine {
+      display: inline-block;
+      background: linear-gradient(115deg, #163a52 5%, #1a7db4 42%, #697cff 75%);
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 560px;
+      color: var(--text-soft);
+      font-size: 18px;
+      line-height: 1.8;
+    }
+
+    .prompt-panel {
+      position: relative;
+      margin-top: 34px;
+      padding: 14px;
+      border-radius: 36px;
+      background: rgba(255, 255, 255, 0.48);
+      box-shadow:
+        0 30px 76px rgba(70, 151, 205, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(26px);
+    }
+
+    .prompt-panel::before {
+      content: "";
+      position: absolute;
+      inset: -24px;
+      z-index: -1;
+      border-radius: inherit;
+      background: radial-gradient(ellipse at center,
+        rgba(96, 194, 255, 0.34),
+        rgba(111, 219, 238, 0.13) 44%,
+        transparent 72%);
+      filter: blur(22px);
+      animation: glowPulse 4.8s ease-in-out infinite alternate;
+    }
+
+    @keyframes glowPulse {
+      from { opacity: .72; transform: scale(.99); }
+      to { opacity: 1; transform: scale(1.015); }
+    }
+
+    .prompt-bar {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 72px;
+      padding: 12px 14px 12px 18px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow:
+        0 18px 44px rgba(58, 132, 187, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.96);
+    }
+
+    .round-icon {
+      flex: 0 0 auto;
+      width: 46px;
+      height: 46px;
+      border: 0;
+      border-radius: 50%;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      color: #1b5e83;
+      background: linear-gradient(145deg, rgba(229, 248, 255, 0.9), rgba(255, 255, 255, 0.95));
+      box-shadow: 0 10px 24px rgba(91, 168, 218, 0.16);
+      font-size: 20px;
+      transition: transform .22s ease;
+    }
+
+    .round-icon:hover {
+      transform: translateY(-2px) scale(1.03);
+    }
+
+    .prompt-bar input {
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text-main);
+      font-size: 16px;
+    }
+
+    .prompt-bar input::placeholder {
+      color: #93a9b9;
+    }
+
+    .soft-select {
+      border: 0;
+      outline: 0;
+      color: #195f88;
+      background: rgba(231, 247, 255, 0.72);
+      border-radius: var(--radius-pill);
+      padding: 12px 14px;
+      font-weight: 750;
+    }
+
+    .floating-board {
+      min-height: 520px;
+      position: relative;
+      border-radius: 44px;
+      padding: 20px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.62), rgba(232,248,255,.46));
+      box-shadow:
+        0 36px 90px rgba(61, 139, 190, 0.20),
+        inset 0 1px 0 rgba(255,255,255,.82);
+      backdrop-filter: blur(26px) saturate(145%);
+      overflow: hidden;
+    }
+
+    .floating-board::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 26% 18%, rgba(108, 218, 255, .28), transparent 28%),
+        radial-gradient(circle at 78% 30%, rgba(138, 151, 255, .18), transparent 32%),
+        linear-gradient(180deg, transparent, rgba(255,255,255,.22));
+      pointer-events: none;
+    }
+
+    .trip-card {
+      position: relative;
+      border-radius: 30px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: 0 22px 54px rgba(54, 130, 180, 0.14);
+      animation: floatCard 5s ease-in-out infinite alternate;
+    }
+
+    .trip-card:nth-child(2) { animation-delay: -1.8s; }
+    .trip-card:nth-child(3) { animation-delay: -3.2s; }
+
+    @keyframes floatCard {
+      from { transform: translateY(0); }
+      to { transform: translateY(-10px); }
+    }
+
+    .trip-card + .trip-card {
+      margin-top: 16px;
+    }
+
+    .trip-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .trip-top h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: var(--radius-pill);
+      padding: 7px 10px;
+      background: rgba(228, 246, 255, 0.82);
+      color: #2274a3;
+      font-size: 12px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .route-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 18px 0 12px;
+      color: var(--text-soft);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .route-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 7px rgba(85,184,255,.14);
+    }
+
+    .route-seg {
+      height: 3px;
+      flex: 1;
+      border-radius: var(--radius-pill);
+      background: linear-gradient(90deg, rgba(85,184,255,.7), rgba(126,140,255,.55));
+    }
+
+    .metric-row,
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .metric {
+      flex: 1;
+      min-width: 120px;
+      border-radius: 22px;
+      padding: 14px;
+      background: rgba(238, 250, 255, 0.7);
+    }
+
+    .metric b {
+      display: block;
+      font-size: 19px;
+      margin-bottom: 3px;
+    }
+
+    .metric span,
+    .trip-card p {
+      color: var(--text-soft);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .chip {
+      border-radius: var(--radius-pill);
+      padding: 8px 11px;
+      background: rgba(255, 255, 255, 0.68);
+      color: #45728e;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 8px 18px rgba(71, 145, 190, .08);
+    }
+
+    .section {
+      display: none;
+      padding: 34px 0 8px;
+    }
+
+    .section.active {
+      display: block;
+      animation: pageIn .38s ease both;
+    }
+
+    @keyframes pageIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 22px;
+      margin: 0 0 20px;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 44px);
+      letter-spacing: -0.055em;
+    }
+
+    .section-head p {
+      margin: 8px 0 0;
+      color: var(--text-soft);
+      line-height: 1.7;
+    }
+
+    .glass-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+    }
+
+    .glass-card {
+      position: relative;
+      border-radius: var(--radius-xl);
+      padding: 22px;
+      background: rgba(255, 255, 255, 0.58);
+      box-shadow:
+        0 24px 70px rgba(63, 140, 190, 0.14),
+        inset 0 1px 0 rgba(255,255,255,.72);
+      backdrop-filter: blur(24px) saturate(142%);
+      overflow: hidden;
+      transition: transform .25s ease, box-shadow .25s ease;
+    }
+
+    .glass-card:hover {
+      transform: translateY(-4px);
+      box-shadow:
+        0 32px 88px rgba(63, 140, 190, 0.18),
+        inset 0 1px 0 rgba(255,255,255,.82);
+    }
+
+    .glass-card::before {
+      content: "";
+      position: absolute;
+      width: 220px;
+      height: 220px;
+      right: -92px;
+      top: -100px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(109, 218, 255, 0.24), transparent 68%);
+      pointer-events: none;
+    }
+
+    .col-4 { grid-column: span 4; }
+    .col-5 { grid-column: span 5; }
+    .col-6 { grid-column: span 6; }
+    .col-7 { grid-column: span 7; }
+    .col-8 { grid-column: span 8; }
+    .col-12 { grid-column: span 12; }
+
+    .glass-card h3 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+
+    .glass-card p {
+      margin: 0;
+      color: var(--text-soft);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .field {
+      border-radius: 24px;
+      padding: 13px 14px;
+      background: rgba(255,255,255,.6);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.78);
+    }
+
+    .field label {
+      display: block;
+      color: var(--text-light);
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      resize: none;
+      background: transparent;
+      color: var(--text-main);
+      font-size: 15px;
+      font-family: inherit;
+    }
+
+    .primary-btn,
+    .ghost-btn {
+      border: 0;
+      cursor: pointer;
+      border-radius: var(--radius-pill);
+      padding: 13px 18px;
+      font-weight: 800;
+      transition: transform .25s ease, box-shadow .25s ease, background .25s ease;
+    }
+
+    .primary-btn {
+      color: #fff;
+      background: linear-gradient(135deg, #45b8ff, #7b83ff);
+      box-shadow: 0 18px 34px rgba(67, 141, 237, 0.26);
+    }
+
+    .ghost-btn {
+      color: #226c98;
+      background: rgba(255,255,255,.68);
+      box-shadow: 0 12px 24px rgba(71, 145, 190, .10);
+    }
+
+    .primary-btn:hover,
+    .ghost-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .status-flow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 12px;
+      border-radius: var(--radius-pill);
+      background: rgba(255,255,255,.55);
+    }
+
+    .status-node {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-soft);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .status-node::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #a5d8f5;
+      box-shadow: 0 0 0 6px rgba(98, 190, 245, 0.12);
+    }
+
+    .status-node.active::before {
+      background: var(--green);
+      box-shadow: 0 0 0 7px rgba(102,214,161,.18);
+    }
+
+    .day-list {
+      display: grid;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .day-item {
+      padding: 16px;
+      border-radius: 26px;
+      background: rgba(255,255,255,.58);
+      box-shadow: 0 14px 34px rgba(56, 133, 183, .10);
+    }
+
+    .day-item strong {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .time-line {
+      display: grid;
+      gap: 10px;
+    }
+
+    .time-row {
+      display: grid;
+      grid-template-columns: 72px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      color: var(--text-soft);
+      font-size: 13px;
+    }
+
+    .time-row b {
+      color: var(--text-main);
+      font-size: 14px;
+    }
+
+    .map-mock {
+      min-height: 390px;
+      border-radius: 34px;
+      padding: 18px;
+      background:
+        radial-gradient(circle at 24% 24%, rgba(83, 195, 255, 0.28), transparent 18%),
+        radial-gradient(circle at 78% 44%, rgba(117, 137, 255, 0.20), transparent 16%),
+        linear-gradient(145deg, rgba(235, 251, 255, .76), rgba(255,255,255,.42));
+      position: relative;
+      overflow: hidden;
+    }
+
+    .map-line {
+      position: absolute;
+      left: 15%;
+      top: 30%;
+      width: 70%;
+      height: 38%;
+      border: 3px solid rgba(70, 171, 236, 0.36);
+      border-left-color: transparent;
+      border-bottom-color: transparent;
+      border-radius: 50%;
+      transform: rotate(-12deg);
+    }
+
+    .map-pin {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border-radius: 50% 50% 50% 8px;
+      transform: rotate(-45deg);
+      background: linear-gradient(135deg, #4abaff, #7c86ff);
+      box-shadow: 0 16px 30px rgba(70, 130, 235, 0.24);
+    }
+
+    .map-pin::after {
+      content: "";
+      position: absolute;
+      inset: 10px;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .pin-a { left: 22%; top: 38%; }
+    .pin-b { left: 54%; top: 18%; animation: bob 3.4s ease-in-out infinite alternate; }
+    .pin-c { left: 73%; top: 58%; animation: bob 3.1s ease-in-out infinite alternate-reverse; }
+
+    @keyframes bob {
+      from { transform: rotate(-45deg) translate(0, 0); }
+      to { transform: rotate(-45deg) translate(5px, -8px); }
+    }
+
+    .budget-bars {
+      display: grid;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .budget-row {
+      display: grid;
+      grid-template-columns: 76px 1fr 58px;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-soft);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .bar {
+      height: 12px;
+      border-radius: var(--radius-pill);
+      background: rgba(213, 237, 250, .72);
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #5fc6ff, #7e89ff);
+    }
+
+    .history-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .history-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: center;
+      padding: 16px;
+      border-radius: 28px;
+      background: rgba(255,255,255,.58);
+      box-shadow: 0 15px 36px rgba(54, 130, 180, .10);
+    }
+
+    .history-item h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
+    .history-item p {
+      margin: 0;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .kpi {
+      border-radius: 26px;
+      padding: 18px;
+      background: rgba(255,255,255,.62);
+      box-shadow: 0 14px 34px rgba(56, 133, 183, .10);
+    }
+
+    .kpi strong {
+      display: block;
+      font-size: 28px;
+      letter-spacing: -0.04em;
+    }
+
+    .kpi span {
+      color: var(--text-soft);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .table-soft {
+      margin-top: 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .table-row {
+      display: grid;
+      grid-template-columns: 1fr 130px 100px 84px;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.56);
+      color: var(--text-soft);
+      font-size: 13px;
+    }
+
+    .table-row b {
+      color: var(--text-main);
+    }
+
+    .badge-ok,
+    .badge-warn,
+    .badge-fail {
+      display: inline-flex;
+      justify-content: center;
+      border-radius: var(--radius-pill);
+      padding: 7px 10px;
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .badge-ok { color: #16885b; background: rgba(102,214,161,.18); }
+    .badge-warn { color: #9a6a10; background: rgba(255,196,107,.22); }
+    .badge-fail { color: #bb4a5b; background: rgba(255,117,140,.18); }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 50;
+      padding: 14px 18px;
+      border-radius: 22px;
+      color: #15577e;
+      background: rgba(255,255,255,.82);
+      box-shadow: 0 24px 60px rgba(63, 140, 190, 0.22);
+      backdrop-filter: blur(18px);
+      transform: translateY(24px);
+      opacity: 0;
+      transition: .28s ease;
+      font-weight: 750;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    @media (max-width: 920px) {
+      .water-nav {
+        align-items: stretch;
+        border-radius: 30px;
+        flex-direction: column;
+      }
+
+      .nav-tabs {
+        overflow-x: auto;
+        justify-content: flex-start;
+      }
+
+      .nav-cta {
+        width: 100%;
+      }
+
+      .hero-grid,
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .glass-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .col-4,
+      .col-5,
+      .col-6,
+      .col-7,
+      .col-8,
+      .col-12 {
+        grid-column: auto;
+      }
+
+      .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .table-row {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding-top: 54px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .app-shell {
+        width: min(100vw - 24px, 1180px);
+      }
+
+      .prompt-bar {
+        align-items: stretch;
+        border-radius: 30px;
+        flex-wrap: wrap;
+      }
+
+      .prompt-bar input {
+        flex-basis: calc(100% - 70px);
+      }
+
+      .soft-select {
+        flex: 1;
+      }
+
+      .kpi-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .section-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <nav class="water-nav">
+      <div class="brand">
+        <div class="brand-mark">✈️</div>
+        <div>
+          <h1>TripAgent Flow</h1>
+          <span>智能旅游规划 Agent 编排平台</span>
+        </div>
+      </div>
+      <div class="nav-tabs" aria-label="页面导航">
+        <button class="active" data-page="home">首页</button>
+        <button data-page="planner">规划</button>
+        <button data-page="trip">行程</button>
+        <button data-page="history">历史</button>
+        <button data-page="exports">导出</button>
+        <button data-page="admin">后台</button>
+      </div>
+      <button class="nav-cta" data-page="planner">开始规划</button>
+    </nav>
+
+    <main>
+      <section id="home" class="section active">
+        <div class="hero">
+          <div class="hero-grid">
+            <div>
+              <div class="eyebrow">🌊 柔和光感 · 强交互 · 行程产品化</div>
+              <h2><span class="shine">让旅行计划</span><br />像水面一样自然浮现</h2>
+              <p>
+                输入出发地、目的地、预算与偏好，Agent 会生成可以保存、重生成、导出和反馈的结构化每日行程。
+                页面采用淡蓝渐变光感、悬浮卡片和柔和动效，弱化硬分割，让用户像在平静水面上操作。
+              </p>
+
+              <div class="prompt-panel">
+                <div class="prompt-bar">
+                  <button class="round-icon" title="添加偏好">＋</button>
+                  <input id="quickPrompt" placeholder="我想从上海去成都，4天，预算3500，喜欢美食和历史文化" />
+                  <select class="soft-select">
+                    <option>均衡游</option>
+                    <option>省钱游</option>
+                    <option>深度游</option>
+                  </select>
+                  <button class="round-icon" title="语音输入">🎙️</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="floating-board">
+              <div class="trip-card">
+                <div class="trip-top">
+                  <div>
+                    <h3>成都 4 日轻松行程</h3>
+                    <p>根据预算、节奏和偏好自动拆分每日路线。</p>
+                  </div>
+                  <span class="pill">生成中</span>
+                </div>
+                <div class="route-line">
+                  <span class="route-dot"></span>
+                  <span>宽窄巷子</span>
+                  <span class="route-seg"></span>
+                  <span>人民公园</span>
+                  <span class="route-seg"></span>
+                  <span>锦里</span>
+                </div>
+                <div class="metric-row">
+                  <div class="metric"><b>4 天</b><span>3 到 7 天 MVP 范围</span></div>
+                  <div class="metric"><b>¥3500</b><span>总预算与每日预算</span></div>
+                </div>
+              </div>
+
+              <div class="trip-card">
+                <div class="trip-top">
+                  <div>
+                    <h3>Agent 任务状态</h3>
+                    <p>长任务不让用户等待在黑盒里。</p>
+                  </div>
+                  <span class="pill">可重试</span>
+                </div>
+                <div class="status-flow">
+                  <span class="status-node active">待生成</span>
+                  <span class="status-node active">生成中</span>
+                  <span class="status-node">成功</span>
+                </div>
+              </div>
+
+              <div class="trip-card">
+                <div class="trip-top">
+                  <div>
+                    <h3>旅行库与运营后台</h3>
+                    <p>用户侧保存历史，管理端查看失败任务和反馈质量。</p>
+                  </div>
+                  <span class="pill">MVP</span>
+                </div>
+                <div class="chip-row">
+                  <span class="chip">历史计划</span>
+                  <span class="chip">预算拆分</span>
+                  <span class="chip">导出占位</span>
+                  <span class="chip">失败日志</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-head">
+          <div>
+            <h2>产品价值展示</h2>
+            <p>首页不是聊天窗口，而是清楚表达 itinerary、budget、map 和 regeneration 的旅行产品入口。</p>
+          </div>
+        </div>
+
+        <div class="glass-grid">
+          <div class="glass-card col-4">
+            <h3>结构化行程</h3>
+            <p>把用户自然语言需求转成每日行程、时间段、地点、预算和注意事项。</p>
+          </div>
+          <div class="glass-card col-4">
+            <h3>可编辑旅行库</h3>
+            <p>历史记录像“我的行程库”，支持再次打开、二次生成和持续优化。</p>
+          </div>
+          <div class="glass-card col-4">
+            <h3>任务健康运营</h3>
+            <p>管理端关注热门目的地、成功率、失败任务和用户反馈，而不是只看日志。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="planner" class="section">
+        <div class="section-head">
+          <div>
+            <h2>规划页</h2>
+            <p>输入旅行需求、选择偏好与预算，发起 Agent 编排任务。</p>
+          </div>
+          <button class="ghost-btn" data-page="trip">查看 mock 结果</button>
+        </div>
+
+        <div class="glass-grid">
+          <div class="glass-card col-7">
+            <h3>旅行需求表单</h3>
+            <p>柔和输入组件漂浮在同一水面上，没有硬分割线。</p>
+
+            <div class="form-grid">
+              <div class="field">
+                <label>出发地</label>
+                <input value="上海" />
+              </div>
+              <div class="field">
+                <label>目的地</label>
+                <input value="成都" />
+              </div>
+              <div class="field">
+                <label>开始日期</label>
+                <input type="date" value="2026-05-01" />
+              </div>
+              <div class="field">
+                <label>结束日期</label>
+                <input type="date" value="2026-05-04" />
+              </div>
+              <div class="field">
+                <label>预算</label>
+                <input value="3500" />
+              </div>
+              <div class="field">
+                <label>旅行节奏</label>
+                <select>
+                  <option>standard / 均衡</option>
+                  <option>saving / 省钱</option>
+                  <option>deep / 深度</option>
+                </select>
+              </div>
+              <div class="field" style="grid-column: 1 / -1;">
+                <label>偏好</label>
+                <textarea rows="3">美食、历史文化、慢节奏、不要太赶路</textarea>
+              </div>
+            </div>
+
+            <div class="action-row">
+              <button class="primary-btn" id="generateBtn">发起规划任务</button>
+              <button class="ghost-btn">保存草稿</button>
+            </div>
+          </div>
+
+          <div class="glass-card col-5">
+            <h3>任务进度</h3>
+            <p>将“待生成 → 生成中 → 成功/失败”显性化，降低等待焦虑。</p>
+            <div class="status-flow">
+              <span class="status-node active">待生成</span>
+              <span class="status-node active">生成中</span>
+              <span class="status-node">成功</span>
+            </div>
+
+            <div class="chip-row">
+              <span class="chip">单目的地</span>
+              <span class="chip">3-7 天</span>
+              <span class="chip">预算拆分</span>
+              <span class="chip">失败可重试</span>
+            </div>
+
+            <div class="trip-card" style="margin-top:18px;">
+              <div class="trip-top">
+                <div>
+                  <h3>Agent 编排层</h3>
+                  <p>统一后端服务调用模型，外部信息源失败时优雅降级。</p>
+                </div>
+                <span class="pill">LLM</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="trip" class="section">
+        <div class="section-head">
+          <div>
+            <h2>行程详情页</h2>
+            <p>以 Day by Day 行程卡片、地图感路线和预算拆分呈现可执行 itinerary。</p>
+          </div>
+          <div class="action-row" style="margin-top:0;">
+            <button class="ghost-btn">再次生成</button>
+            <button class="primary-btn" data-page="exports">导出计划</button>
+          </div>
+        </div>
+
+        <div class="glass-grid">
+          <div class="glass-card col-7">
+            <div class="trip-top">
+              <div>
+                <h3>成都 4 日美食与历史文化行程</h3>
+                <p>上海出发 · 2026.05.01 - 2026.05.04 · 均衡节奏</p>
+              </div>
+              <span class="pill">已保存</span>
+            </div>
+
+            <div class="day-list">
+              <div class="day-item">
+                <strong>Day 1 · 抵达与城市初体验</strong>
+                <div class="time-line">
+                  <div class="time-row"><span>10:30</span><b>抵达成都</b><span>¥60</span></div>
+                  <div class="time-row"><span>14:00</span><b>宽窄巷子</b><span>¥120</span></div>
+                  <div class="time-row"><span>18:30</span><b>锦里夜游</b><span>¥180</span></div>
+                </div>
+              </div>
+              <div class="day-item">
+                <strong>Day 2 · 历史文化路线</strong>
+                <div class="time-line">
+                  <div class="time-row"><span>09:00</span><b>武侯祠</b><span>¥80</span></div>
+                  <div class="time-row"><span>13:30</span><b>杜甫草堂</b><span>¥120</span></div>
+                  <div class="time-row"><span>19:00</span><b>川菜体验</b><span>¥220</span></div>
+                </div>
+              </div>
+              <div class="day-item">
+                <strong>Day 3 · 休闲美食与公园</strong>
+                <div class="time-line">
+                  <div class="time-row"><span>10:00</span><b>人民公园</b><span>¥60</span></div>
+                  <div class="time-row"><span>15:00</span><b>太古里</b><span>¥160</span></div>
+                  <div class="time-row"><span>20:00</span><b>火锅晚餐</b><span>¥260</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card col-5">
+            <h3>路线地图感视图</h3>
+            <p>列表与地图并存，强化“行程编辑台”而不是纯聊天回答。</p>
+            <div class="map-mock">
+              <div class="map-line"></div>
+              <div class="map-pin pin-a"></div>
+              <div class="map-pin pin-b"></div>
+              <div class="map-pin pin-c"></div>
+            </div>
+          </div>
+
+          <div class="glass-card col-12">
+            <h3>预算拆分</h3>
+            <div class="budget-bars">
+              <div class="budget-row"><span>交通</span><div class="bar"><span style="width: 38%"></span></div><span>¥900</span></div>
+              <div class="budget-row"><span>餐饮</span><div class="bar"><span style="width: 62%"></span></div><span>¥1200</span></div>
+              <div class="budget-row"><span>门票</span><div class="bar"><span style="width: 24%"></span></div><span>¥420</span></div>
+              <div class="budget-row"><span>住宿</span><div class="bar"><span style="width: 52%"></span></div><span>¥980</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="history" class="section">
+        <div class="section-head">
+          <div>
+            <h2>历史计划页</h2>
+            <p>像“我的旅行库”，支持重新打开、再次生成和继续导出。</p>
+          </div>
+        </div>
+
+        <div class="glass-card">
+          <div class="history-list">
+            <div class="history-item">
+              <div>
+                <h3>成都 4 日美食与历史文化行程</h3>
+                <p>已保存 · 预算 ¥3500 · 最近编辑 2 小时前</p>
+              </div>
+              <button class="ghost-btn" data-page="trip">打开</button>
+            </div>
+            <div class="history-item">
+              <div>
+                <h3>杭州 3 日轻松周末游</h3>
+                <p>草稿 · 预算 ¥1800 · 可继续生成</p>
+              </div>
+              <button class="ghost-btn">重生成</button>
+            </div>
+            <div class="history-item">
+              <div>
+                <h3>西安 5 日历史深度游</h3>
+                <p>已导出 · 预算 ¥4200 · 用户评分 4.6</p>
+              </div>
+              <button class="ghost-btn">查看</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="exports" class="section">
+        <div class="section-head">
+          <div>
+            <h2>反馈与导出页</h2>
+            <p>第一版提供文本/PDF 导出占位能力，同时收集生成质量反馈。</p>
+          </div>
+        </div>
+
+        <div class="glass-grid">
+          <div class="glass-card col-6">
+            <h3>导出计划</h3>
+            <p>导出失败可重试，移动端至少可查看详情和历史计划。</p>
+            <div class="action-row">
+              <button class="primary-btn">导出 PDF 占位</button>
+              <button class="ghost-btn">下载纯文本</button>
+              <button class="ghost-btn">复制分享文案</button>
+            </div>
+          </div>
+          <div class="glass-card col-6">
+            <h3>提交反馈</h3>
+            <div class="form-grid">
+              <div class="field">
+                <label>评分</label>
+                <select>
+                  <option>5 - 很满意</option>
+                  <option>4 - 基本满意</option>
+                  <option>3 - 需要调整</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>问题类型</label>
+                <select>
+                  <option>路线太赶</option>
+                  <option>预算不准</option>
+                  <option>地点不合理</option>
+                </select>
+              </div>
+              <div class="field" style="grid-column: 1 / -1;">
+                <label>反馈内容</label>
+                <textarea rows="4" placeholder="告诉我们哪里需要优化"></textarea>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="primary-btn">提交反馈</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="admin" class="section">
+        <div class="section-head">
+          <div>
+            <h2>后台管理台</h2>
+            <p>面向运营与任务健康，关注热门目的地、失败任务和用户反馈。</p>
+          </div>
+        </div>
+
+        <div class="glass-card">
+          <h3>任务与平台指标</h3>
+          <div class="kpi-grid">
+            <div class="kpi"><strong>1,286</strong><span>日规划任务数</span></div>
+            <div class="kpi"><strong>96.4%</strong><span>规划成功率</span></div>
+            <div class="kpi"><strong>7.8s</strong><span>平均生成耗时</span></div>
+            <div class="kpi"><strong>142</strong><span>导出次数</span></div>
+          </div>
+        </div>
+
+        <div class="glass-grid" style="margin-top:18px;">
+          <div class="glass-card col-5">
+            <h3>热门目的地</h3>
+            <div class="budget-bars">
+              <div class="budget-row"><span>成都</span><div class="bar"><span style="width: 86%"></span></div><span>286</span></div>
+              <div class="budget-row"><span>杭州</span><div class="bar"><span style="width: 72%"></span></div><span>241</span></div>
+              <div class="budget-row"><span>西安</span><div class="bar"><span style="width: 64%"></span></div><span>198</span></div>
+            </div>
+          </div>
+
+          <div class="glass-card col-7">
+            <h3>失败任务与反馈</h3>
+            <div class="table-soft">
+              <div class="table-row"><b>成都 4 日行程</b><span>provider timeout</span><span>8.9s</span><span class="badge-fail">失败</span></div>
+              <div class="table-row"><b>厦门 3 日行程</b><span>poi degrade</span><span>6.1s</span><span class="badge-warn">降级</span></div>
+              <div class="table-row"><b>杭州 5 日行程</b><span>normal</span><span>5.4s</span><span class="badge-ok">成功</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast">规划任务已启动，正在生成结构化行程</div>
+
+  <script>
+    const buttons = document.querySelectorAll("[data-page]");
+    const sections = document.querySelectorAll(".section");
+    const tabs = document.querySelectorAll(".nav-tabs button");
+    const toast = document.getElementById("toast");
+
+    function showPage(page) {
+      sections.forEach(section => section.classList.toggle("active", section.id === page));
+      tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.page === page));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    buttons.forEach(button => {
+      button.addEventListener("click", () => showPage(button.dataset.page));
+    });
+
+    document.getElementById("generateBtn")?.addEventListener("click", () => {
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 2400);
+      setTimeout(() => showPage("trip"), 900);
+    });
+
+    document.getElementById("quickPrompt")?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        showPage("planner");
+      }
+    });
+  </script>
+</body>
+</html>
