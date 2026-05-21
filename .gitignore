@@ -3,3 +3,4 @@ diary/
 .env
 .env.*
 !.env.example
+__pycache__/
