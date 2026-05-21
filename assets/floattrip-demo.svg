@@ -1,0 +1,113 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">FloatTrip Travel Planning Demo</title>
+  <desc id="desc">A calm water-themed travel planning dashboard illustration with floating cards and an itinerary timeline.</desc>
+  <defs>
+    <linearGradient id="bg" x1="200" y1="0" x2="1400" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FBFDFF"/>
+      <stop offset="0.45" stop-color="#EBF8FF"/>
+      <stop offset="1" stop-color="#CBEFFF"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(330 180) rotate(46) scale(280 220)">
+      <stop stop-color="#7DDCFF" stop-opacity="0.58"/>
+      <stop offset="1" stop-color="#7DDCFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1260 160) rotate(135) scale(300 240)">
+      <stop stop-color="#9BA8FF" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#9BA8FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card" x1="320" y1="220" x2="620" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#DFF5FF" stop-opacity="0.72"/>
+    </linearGradient>
+    <linearGradient id="card2" x1="940" y1="240" x2="1270" y2="610" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#E5EEFF" stop-opacity="0.74"/>
+    </linearGradient>
+    <linearGradient id="button" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#50B8FF"/>
+      <stop offset="1" stop-color="#6D7DFF"/>
+    </linearGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#4D92C8" flood-opacity="0.18"/>
+    </filter>
+    <filter id="softBlur" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="20"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="330" cy="180" r="260" fill="url(#glowA)"/>
+  <circle cx="1260" cy="160" r="280" fill="url(#glowB)"/>
+  <circle cx="1260" cy="720" r="220" fill="#93DDFF" fill-opacity="0.18" filter="url(#softBlur)"/>
+  <circle cx="260" cy="760" r="180" fill="#A8C5FF" fill-opacity="0.18" filter="url(#softBlur)"/>
+
+  <g opacity="0.35">
+    <path d="M140 620C320 560 430 680 610 620C790 560 900 670 1080 620C1260 570 1370 660 1510 620" stroke="#7DCBFF" stroke-width="4" stroke-linecap="round"/>
+    <path d="M100 660C280 600 400 720 580 660C760 600 890 710 1070 660C1250 610 1360 700 1500 660" stroke="#A5DFFF" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="170" y="120" width="1260" height="120" rx="60" fill="white" fill-opacity="0.58"/>
+    <rect x="194" y="144" width="74" height="74" rx="24" fill="url(#button)"/>
+    <path d="M228 164C214 166 205 177 205 189C205 198 210 205 218 210L218 218C218 221 220 224 223 226C226 228 230 228 233 226L272 203C276 201 278 197 278 193C278 189 276 185 272 183L233 160C231 159 230 159 228 164Z" fill="white"/>
+    <text x="292" y="184" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#123246">FloatTrip</text>
+    <text x="292" y="219" font-family="Arial, sans-serif" font-size="18" fill="#5F7B8F">Let travel planning float out naturally</text>
+
+    <rect x="1084" y="150" width="112" height="52" rx="26" fill="#FFFFFF" fill-opacity="0.75"/>
+    <rect x="1210" y="150" width="112" height="52" rx="26" fill="#E8F6FF"/>
+    <rect x="1336" y="150" width="112" height="52" rx="26" fill="url(#button)"/>
+    <text x="1111" y="184" font-family="Arial, sans-serif" font-size="17" font-weight="700" fill="#2474A5">官网</text>
+    <text x="1238" y="184" font-family="Arial, sans-serif" font-size="17" font-weight="700" fill="#2474A5">工作台</text>
+    <text x="1362" y="184" font-family="Arial, sans-serif" font-size="17" font-weight="700" fill="#FFFFFF">开始规划</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="150" y="280" width="650" height="470" rx="42" fill="url(#card)"/>
+    <rect x="828" y="280" width="622" height="470" rx="42" fill="url(#card2)"/>
+  </g>
+
+  <g>
+    <text x="198" y="336" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#2474A5">规划页 Preview</text>
+    <text x="198" y="372" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="#123246">输入需求，一键生成行程</text>
+    <text x="198" y="412" font-family="Arial, sans-serif" font-size="19" fill="#5F7B8F">城市、天数、预算、偏好一次提交，Agent 自动编排成可执行方案。</text>
+
+    <rect x="198" y="452" width="560" height="70" rx="22" fill="white" fill-opacity="0.88"/>
+    <rect x="198" y="538" width="330" height="70" rx="22" fill="white" fill-opacity="0.88"/>
+    <rect x="546" y="538" width="212" height="70" rx="22" fill="white" fill-opacity="0.88"/>
+    <rect x="198" y="624" width="560" height="92" rx="26" fill="#F1FAFF"/>
+
+    <text x="226" y="497" font-family="Arial, sans-serif" font-size="18" fill="#8AA1B3">目的地：东京 / 3 天 / 预算 5000+</text>
+    <text x="226" y="583" font-family="Arial, sans-serif" font-size="18" fill="#8AA1B3">偏好：美食、City Walk、轻松节奏</text>
+    <text x="574" y="583" font-family="Arial, sans-serif" font-size="18" fill="#8AA1B3">同行：2 人</text>
+    <text x="226" y="662" font-family="Arial, sans-serif" font-size="18" fill="#2474A5">输出：每日行程、预算拆分、交通建议、注意事项</text>
+  </g>
+
+  <g>
+    <text x="878" y="336" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#2474A5">Agent Flow</text>
+    <text x="878" y="372" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="#123246">像水面一样流动的编排链路</text>
+
+    <g>
+      <rect x="884" y="420" width="118" height="70" rx="24" fill="white" fill-opacity="0.9"/>
+      <rect x="1030" y="420" width="118" height="70" rx="24" fill="white" fill-opacity="0.9"/>
+      <rect x="1176" y="420" width="118" height="70" rx="24" fill="white" fill-opacity="0.9"/>
+      <rect x="1322" y="420" width="118" height="70" rx="24" fill="white" fill-opacity="0.9"/>
+      <path d="M1004 455H1022" stroke="#7DCBFF" stroke-width="4" stroke-linecap="round"/>
+      <path d="M1150 455H1168" stroke="#7DCBFF" stroke-width="4" stroke-linecap="round"/>
+      <path d="M1296 455H1314" stroke="#7DCBFF" stroke-width="4" stroke-linecap="round"/>
+      <text x="908" y="451" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#2474A5">需求</text>
+      <text x="1046" y="451" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#2474A5">检索</text>
+      <text x="1190" y="451" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#2474A5">编排</text>
+      <text x="1336" y="451" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#2474A5">输出</text>
+    </g>
+
+    <rect x="884" y="528" width="556" height="94" rx="28" fill="#F4FBFF"/>
+    <text x="916" y="566" font-family="Arial, sans-serif" font-size="18" fill="#123246">Day 1: 抵达 - 轻松入住 - 河畔晚餐 - 早睡</text>
+    <text x="916" y="598" font-family="Arial, sans-serif" font-size="18" fill="#123246">Day 2: 早晨市集 - 博物馆 - 咖啡馆 - 夜景散步</text>
+
+    <rect x="884" y="644" width="556" height="88" rx="28" fill="#FFFFFF" fill-opacity="0.8"/>
+    <circle cx="926" cy="688" r="12" fill="#66D6A1"/>
+    <circle cx="978" cy="688" r="12" fill="#FFC46B"/>
+    <circle cx="1030" cy="688" r="12" fill="#FF7890"/>
+    <text x="1068" y="694" font-family="Arial, sans-serif" font-size="18" fill="#5F7B8F">预算 / 交通 / 节奏 / 风险提示同步呈现</text>
+  </g>
+</svg>

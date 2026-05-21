@@ -1,0 +1,1511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TripAgent Flow - 智能旅游规划 Agent 编排平台</title>
+  <style>
+    :root {
+      --bg-top: #fbfdff;
+      --bg-mid: #ecf8ff;
+      --bg-bottom: #c9ecff;
+      --ink: #123246;
+      --muted: #5f7b8f;
+      --faint: #8aa1b3;
+      --card: rgba(255, 255, 255, 0.62);
+      --card-strong: rgba(255, 255, 255, 0.86);
+      --blue: #55b8ff;
+      --cyan: #6ee7f8;
+      --indigo: #7c8cff;
+      --green: #66d6a1;
+      --orange: #ffc46b;
+      --red: #ff7890;
+      --shadow-blue: rgba(78, 168, 230, 0.22);
+      --shadow-soft: rgba(41, 91, 122, 0.1);
+      --radius-xl: 34px;
+      --radius-lg: 26px;
+      --radius-pill: 999px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 14% 14%, rgba(111, 211, 255, 0.42), transparent 32%),
+        radial-gradient(circle at 82% 9%, rgba(150, 167, 255, 0.25), transparent 31%),
+        radial-gradient(circle at 76% 82%, rgba(98, 221, 236, 0.3), transparent 34%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 42%, var(--bg-bottom) 100%);
+      overflow-x: hidden;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      z-index: -2;
+      pointer-events: none;
+      border-radius: 50%;
+      filter: blur(12px);
+      animation: drift 13s ease-in-out infinite alternate;
+    }
+
+    body::before {
+      width: 520px;
+      height: 520px;
+      left: -190px;
+      top: 130px;
+      background: radial-gradient(circle, rgba(137, 218, 255, 0.34), transparent 68%);
+    }
+
+    body::after {
+      width: 620px;
+      height: 620px;
+      right: -250px;
+      bottom: -140px;
+      background: radial-gradient(circle, rgba(150, 185, 255, 0.28), transparent 70%);
+      animation-delay: -4s;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    @keyframes drift {
+      from { transform: translate3d(0, 0, 0) scale(1); }
+      to { transform: translate3d(34px, -22px, 0) scale(1.05); }
+    }
+
+    @keyframes glowPulse {
+      from { opacity: .7; transform: scale(.99); }
+      to { opacity: 1; transform: scale(1.018); }
+    }
+
+    @keyframes floatCard {
+      from { transform: translateY(0); }
+      to { transform: translateY(-10px); }
+    }
+
+    @keyframes pageIn {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes surfaceRipple {
+      from { transform: translate3d(-18%, 0, 0) scaleX(.92); opacity: 0; }
+      38% { opacity: .72; }
+      to { transform: translate3d(18%, 0, 0) scaleX(1.08); opacity: 0; }
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 24px 0 64px;
+    }
+
+    .water-nav {
+      position: sticky;
+      top: 18px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 14px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.56);
+      box-shadow:
+        0 18px 46px rgba(62, 141, 198, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.78);
+      backdrop-filter: blur(22px) saturate(150%);
+      -webkit-backdrop-filter: blur(22px) saturate(150%);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-left: 8px;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.96), rgba(218,244,255,.82)),
+        radial-gradient(circle at 32% 22%, #80dcff, transparent 52%);
+      box-shadow:
+        0 16px 32px rgba(85, 184, 255, 0.25),
+        inset 0 1px 0 rgba(255,255,255,.95);
+      font-size: 21px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px;
+      border-radius: var(--radius-pill);
+      background: rgba(227, 246, 255, 0.52);
+    }
+
+    .nav-links a {
+      border-radius: var(--radius-pill);
+      padding: 11px 15px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 750;
+      transition: transform .25s ease, background .25s ease, color .25s ease;
+    }
+
+    .nav-links a:hover {
+      transform: translateY(-1px);
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.64);
+    }
+
+    .nav-cta,
+    .primary-btn,
+    .ghost-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 0;
+      cursor: pointer;
+      border-radius: var(--radius-pill);
+      padding: 13px 18px;
+      font-weight: 850;
+      transition: transform .25s ease, box-shadow .25s ease, background .25s ease;
+    }
+
+    .nav-cta,
+    .primary-btn {
+      color: #fff;
+      background: linear-gradient(135deg, #50b8ff, #6d7dff);
+      box-shadow: 0 16px 30px rgba(71, 142, 240, 0.26);
+    }
+
+    .ghost-btn {
+      color: #226c98;
+      background: rgba(255,255,255,.72);
+      box-shadow: 0 12px 24px rgba(71, 145, 190, .10);
+    }
+
+    .nav-cta:hover,
+    .primary-btn:hover,
+    .ghost-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .hero {
+      min-height: 680px;
+      display: grid;
+      align-items: center;
+      padding: 88px 0 50px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.02fr .98fr;
+      gap: 34px;
+      align-items: center;
+    }
+
+    .hero-copy,
+    .floating-board,
+    .glass-card {
+      animation: pageIn .52s ease both;
+    }
+
+    .reveal-on-scroll {
+      animation: none;
+      opacity: 0;
+      filter: blur(14px);
+      transform: translate3d(0, 62px, 0) scale(.982);
+      transition:
+        opacity .86s cubic-bezier(.2, .82, .18, 1),
+        filter .86s cubic-bezier(.2, .82, .18, 1),
+        transform .98s cubic-bezier(.16, 1, .3, 1);
+      transition-delay: var(--reveal-delay, 0ms);
+      will-change: opacity, filter, transform;
+    }
+
+    .reveal-on-scroll.is-visible {
+      opacity: 1;
+      filter: blur(0);
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+
+    .reveal-on-scroll[data-reveal="left"] {
+      transform: translate3d(-42px, 46px, 0) scale(.985);
+    }
+
+    .reveal-on-scroll[data-reveal="right"] {
+      transform: translate3d(42px, 46px, 0) scale(.985);
+    }
+
+    .reveal-on-scroll[data-reveal="left"].is-visible,
+    .reveal-on-scroll[data-reveal="right"].is-visible {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 13px;
+      border-radius: var(--radius-pill);
+      color: #2474a5;
+      background: rgba(255, 255, 255, 0.62);
+      box-shadow: 0 12px 36px rgba(79, 155, 206, 0.14);
+      font-size: 13px;
+      font-weight: 800;
+      backdrop-filter: blur(16px);
+    }
+
+    .hero h2 {
+      margin: 22px 0 18px;
+      font-size: clamp(44px, 7vw, 78px);
+      line-height: 0.98;
+      letter-spacing: -0.076em;
+    }
+
+    .shine {
+      display: inline-block;
+      color: transparent;
+      background: linear-gradient(115deg, #163a52 5%, #1a7db4 42%, #697cff 75%);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    .hero-text {
+      max-width: 570px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.82;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 26px;
+    }
+
+    .prompt-panel {
+      position: relative;
+      margin-top: 30px;
+      padding: 14px;
+      border-radius: 36px;
+      background: rgba(255, 255, 255, 0.48);
+      box-shadow:
+        0 30px 76px rgba(70, 151, 205, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(26px);
+    }
+
+    .prompt-panel::before {
+      content: "";
+      position: absolute;
+      inset: -24px;
+      z-index: -1;
+      border-radius: inherit;
+      background: radial-gradient(ellipse at center,
+        rgba(96, 194, 255, 0.34),
+        rgba(111, 219, 238, 0.13) 44%,
+        transparent 72%);
+      filter: blur(22px);
+      animation: glowPulse 4.8s ease-in-out infinite alternate;
+    }
+
+    .prompt-bar {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 72px;
+      padding: 12px 14px 12px 18px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow:
+        0 18px 44px rgba(58, 132, 187, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.96);
+    }
+
+    .round-icon {
+      flex: 0 0 auto;
+      width: 46px;
+      height: 46px;
+      border: 0;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: #1b5e83;
+      background: linear-gradient(145deg, rgba(229, 248, 255, 0.9), rgba(255, 255, 255, 0.95));
+      box-shadow: 0 10px 24px rgba(91, 168, 218, 0.16);
+      font-size: 20px;
+    }
+
+    .prompt-bar input {
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      color: var(--ink);
+      background: transparent;
+      font-size: 16px;
+    }
+
+    .soft-select {
+      border: 0;
+      outline: 0;
+      color: #195f88;
+      background: rgba(231, 247, 255, 0.72);
+      border-radius: var(--radius-pill);
+      padding: 12px 14px;
+      font-weight: 800;
+    }
+
+    .floating-board {
+      position: relative;
+      min-height: 560px;
+      padding: 20px;
+      border-radius: 44px;
+      overflow: hidden;
+      background: linear-gradient(145deg, rgba(255,255,255,.62), rgba(232,248,255,.46));
+      box-shadow:
+        0 36px 90px rgba(61, 139, 190, 0.20),
+        inset 0 1px 0 rgba(255,255,255,.82);
+      backdrop-filter: blur(26px) saturate(145%);
+      animation-delay: .08s;
+    }
+
+    .floating-board::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 26% 18%, rgba(108, 218, 255, .28), transparent 28%),
+        radial-gradient(circle at 78% 30%, rgba(138, 151, 255, .18), transparent 32%),
+        linear-gradient(180deg, transparent, rgba(255,255,255,.22));
+      pointer-events: none;
+    }
+
+    .trip-card {
+      position: relative;
+      padding: 20px;
+      border-radius: 30px;
+      background: rgba(255, 255, 255, 0.74);
+      box-shadow: 0 22px 54px rgba(54, 130, 180, 0.14);
+      animation: floatCard 5s ease-in-out infinite alternate;
+    }
+
+    .trip-card:nth-child(2) {
+      animation-delay: -1.8s;
+    }
+
+    .trip-card:nth-child(3) {
+      animation-delay: -3.2s;
+    }
+
+    .trip-card + .trip-card {
+      margin-top: 16px;
+    }
+
+    .trip-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .trip-top h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+
+    .trip-card p,
+    .glass-card p,
+    .scenario p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: var(--radius-pill);
+      padding: 7px 10px;
+      background: rgba(228, 246, 255, 0.82);
+      color: #2274a3;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .route-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 18px 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .route-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 7px rgba(85,184,255,.14);
+    }
+
+    .route-seg {
+      height: 3px;
+      flex: 1;
+      border-radius: var(--radius-pill);
+      background: linear-gradient(90deg, rgba(85,184,255,.7), rgba(126,140,255,.55));
+    }
+
+    .metric-row,
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .metric {
+      flex: 1;
+      min-width: 120px;
+      padding: 14px;
+      border-radius: 22px;
+      background: rgba(238, 250, 255, 0.7);
+    }
+
+    .metric b {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 19px;
+    }
+
+    .metric span,
+    .chip {
+      color: #45728e;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .status-flow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 12px;
+      border-radius: var(--radius-pill);
+      background: rgba(255,255,255,.55);
+    }
+
+    .status-node {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .status-node::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #a5d8f5;
+      box-shadow: 0 0 0 6px rgba(98, 190, 245, 0.12);
+    }
+
+    .status-node.active::before {
+      background: var(--green);
+      box-shadow: 0 0 0 7px rgba(102,214,161,.18);
+    }
+
+    .chip {
+      border-radius: var(--radius-pill);
+      padding: 8px 11px;
+      background: rgba(255, 255, 255, 0.68);
+      box-shadow: 0 8px 18px rgba(71, 145, 190, .08);
+    }
+
+    .section {
+      position: relative;
+      padding: 46px 0 8px;
+    }
+
+    .section::before {
+      content: "";
+      position: absolute;
+      left: 5%;
+      right: 5%;
+      top: 18px;
+      height: 1px;
+      pointer-events: none;
+      background: linear-gradient(90deg, transparent, rgba(83, 184, 255, .34), rgba(255,255,255,.7), transparent);
+      opacity: 0;
+      transform-origin: center;
+    }
+
+    .section.water-surfaced::before {
+      animation: surfaceRipple 1.24s ease-out both;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 22px;
+      margin: 0 0 20px;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 46px);
+      letter-spacing: -0.055em;
+    }
+
+    .section-head p {
+      max-width: 660px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .glass-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+    }
+
+    .glass-card {
+      position: relative;
+      min-height: 100%;
+      padding: 22px;
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.58);
+      box-shadow:
+        0 24px 70px rgba(63, 140, 190, 0.14),
+        inset 0 1px 0 rgba(255,255,255,.72);
+      backdrop-filter: blur(24px) saturate(142%);
+      transition: transform .25s ease, box-shadow .25s ease;
+    }
+
+    .glass-card:hover {
+      transform: translateY(-4px);
+      box-shadow:
+        0 32px 88px rgba(63, 140, 190, 0.18),
+        inset 0 1px 0 rgba(255,255,255,.82);
+    }
+
+    .glass-card::before {
+      content: "";
+      position: absolute;
+      width: 220px;
+      height: 220px;
+      right: -92px;
+      top: -100px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(109, 218, 255, 0.24), transparent 68%);
+      pointer-events: none;
+    }
+
+    .glass-card h3 {
+      position: relative;
+      margin: 0 0 10px;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+
+    .col-3 { grid-column: span 3; }
+    .col-4 { grid-column: span 4; }
+    .col-5 { grid-column: span 5; }
+    .col-6 { grid-column: span 6; }
+    .col-7 { grid-column: span 7; }
+    .col-12 { grid-column: span 12; }
+
+    .scenario {
+      display: grid;
+      gap: 14px;
+    }
+
+    .scenario-icon {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      color: #15577e;
+      background: linear-gradient(145deg, rgba(229, 248, 255, 0.86), rgba(255,255,255,.92));
+      box-shadow: 0 12px 26px rgba(76, 154, 206, .13);
+      font-size: 22px;
+    }
+
+    .demo-board {
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .day-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .day-item {
+      padding: 15px;
+      border-radius: 24px;
+      background: rgba(255,255,255,.58);
+      box-shadow: 0 14px 34px rgba(56, 133, 183, .10);
+    }
+
+    .day-item strong {
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    .time-row {
+      display: grid;
+      grid-template-columns: 70px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .time-row + .time-row {
+      margin-top: 9px;
+    }
+
+    .time-row b {
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .budget-bars {
+      display: grid;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .budget-row {
+      display: grid;
+      grid-template-columns: 76px 1fr 58px;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .bar {
+      height: 12px;
+      border-radius: var(--radius-pill);
+      background: rgba(213, 237, 250, .72);
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #5fc6ff, #7e89ff);
+    }
+
+    .map-mock {
+      min-height: 300px;
+      margin-top: 16px;
+      border-radius: 30px;
+      background:
+        radial-gradient(circle at 24% 24%, rgba(83, 195, 255, 0.28), transparent 18%),
+        radial-gradient(circle at 78% 44%, rgba(117, 137, 255, 0.20), transparent 16%),
+        linear-gradient(145deg, rgba(235, 251, 255, .76), rgba(255,255,255,.42));
+      position: relative;
+      overflow: hidden;
+    }
+
+    .map-line {
+      position: absolute;
+      left: 15%;
+      top: 30%;
+      width: 70%;
+      height: 38%;
+      border: 3px solid rgba(70, 171, 236, 0.36);
+      border-left-color: transparent;
+      border-bottom-color: transparent;
+      border-radius: 50%;
+      transform: rotate(-12deg);
+    }
+
+    .map-pin {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border-radius: 50% 50% 50% 8px;
+      transform: rotate(-45deg);
+      background: linear-gradient(135deg, #4abaff, #7c86ff);
+      box-shadow: 0 16px 30px rgba(70, 130, 235, 0.24);
+    }
+
+    .map-pin::after {
+      content: "";
+      position: absolute;
+      inset: 10px;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .pin-a { left: 22%; top: 38%; }
+    .pin-b { left: 54%; top: 18%; }
+    .pin-c { left: 73%; top: 58%; }
+
+    .final-cta {
+      position: relative;
+      margin-top: 46px;
+      padding: 30px;
+      border-radius: 40px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 22px;
+      align-items: center;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.72), rgba(229,247,255,.56)),
+        radial-gradient(circle at 18% 18%, rgba(87, 195, 255, .28), transparent 34%);
+      box-shadow:
+        0 34px 86px rgba(62, 141, 198, 0.18),
+        inset 0 1px 0 rgba(255,255,255,.82);
+      backdrop-filter: blur(22px);
+    }
+
+    .final-cta h2 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 44px);
+      letter-spacing: -0.055em;
+    }
+
+    .final-cta p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 50;
+      padding: 14px 18px;
+      border-radius: 22px;
+      color: #15577e;
+      background: rgba(255,255,255,.82);
+      box-shadow: 0 24px 60px rgba(63, 140, 190, 0.22);
+      backdrop-filter: blur(18px);
+      transform: translateY(24px);
+      opacity: 0;
+      transition: .28s ease;
+      font-weight: 800;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      background:
+        radial-gradient(circle at 50% 58%, rgba(107, 216, 255, .28), transparent 36%),
+        linear-gradient(180deg, rgba(232, 249, 255, .28), rgba(124, 183, 228, .18));
+      backdrop-filter: blur(0) saturate(125%);
+      -webkit-backdrop-filter: blur(0) saturate(125%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .34s ease, backdrop-filter .48s ease, -webkit-backdrop-filter .48s ease;
+    }
+
+    .login-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+      backdrop-filter: blur(18px) saturate(145%);
+      -webkit-backdrop-filter: blur(18px) saturate(145%);
+    }
+
+    .login-modal {
+      position: relative;
+      width: min(460px, 100%);
+      padding: 24px;
+      border-radius: 34px;
+      color: var(--ink);
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.84), rgba(232,248,255,.68)),
+        radial-gradient(circle at 28% 18%, rgba(105, 215, 255, .24), transparent 38%);
+      box-shadow:
+        0 34px 100px rgba(31, 103, 158, .24),
+        inset 0 1px 0 rgba(255,255,255,.88);
+      transform: translate3d(0, 44px, 0) scale(.955);
+      filter: blur(16px);
+      opacity: 0;
+      transition:
+        opacity .48s cubic-bezier(.2, .82, .18, 1),
+        filter .48s cubic-bezier(.2, .82, .18, 1),
+        transform .62s cubic-bezier(.16, 1, .3, 1);
+      overflow: hidden;
+    }
+
+    .login-modal::before {
+      content: "";
+      position: absolute;
+      left: 12%;
+      right: 12%;
+      bottom: -22px;
+      height: 44px;
+      border-radius: 50%;
+      background: radial-gradient(ellipse, rgba(68, 185, 255, .26), transparent 70%);
+      filter: blur(8px);
+      pointer-events: none;
+    }
+
+    .login-modal::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(255,255,255,.62), transparent 22%),
+        linear-gradient(180deg, rgba(255,255,255,.26), transparent 52%);
+    }
+
+    .login-overlay.open .login-modal {
+      opacity: 1;
+      filter: blur(0);
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      z-index: 2;
+      width: 38px;
+      height: 38px;
+      border: 0;
+      border-radius: 50%;
+      cursor: pointer;
+      color: #246b94;
+      background: rgba(255,255,255,.66);
+      box-shadow: 0 10px 22px rgba(71, 145, 190, .12);
+      font-size: 20px;
+    }
+
+    .login-content {
+      position: relative;
+      z-index: 1;
+    }
+
+    .login-kicker {
+      display: inline-flex;
+      margin-bottom: 14px;
+      padding: 8px 12px;
+      border-radius: var(--radius-pill);
+      color: #2474a5;
+      background: rgba(228, 246, 255, 0.82);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .login-content h2 {
+      margin: 0 42px 10px 0;
+      font-size: 30px;
+      letter-spacing: -0.045em;
+    }
+
+    .login-content p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .login-fields {
+      display: grid;
+      gap: 12px;
+      margin: 18px 0;
+    }
+
+    .login-field {
+      padding: 13px 14px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.64);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.78);
+    }
+
+    .login-field label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--faint);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .login-field input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      color: var(--ink);
+      background: transparent;
+      font-size: 15px;
+    }
+
+    .modal-actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .modal-note {
+      margin-top: 14px;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.6;
+      text-align: center;
+    }
+
+    @media (max-width: 940px) {
+      .water-nav {
+        align-items: stretch;
+        border-radius: 30px;
+        flex-direction: column;
+      }
+
+      .nav-links {
+        overflow-x: auto;
+        justify-content: flex-start;
+      }
+
+      .nav-cta {
+        width: 100%;
+      }
+
+      .hero {
+        padding-top: 54px;
+      }
+
+      .hero-grid,
+      .demo-board,
+      .final-cta {
+        grid-template-columns: 1fr;
+      }
+
+      .glass-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .col-3,
+      .col-4,
+      .col-5,
+      .col-6,
+      .col-7,
+      .col-12 {
+        grid-column: auto;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .shell {
+        width: min(100vw - 24px, 1180px);
+      }
+
+      .hero h2 {
+        font-size: 42px;
+      }
+
+      .prompt-bar {
+        align-items: stretch;
+        border-radius: 30px;
+        flex-wrap: wrap;
+      }
+
+      .prompt-bar input {
+        flex-basis: calc(100% - 70px);
+      }
+
+      .soft-select {
+        flex: 1;
+      }
+
+      .section-head,
+      .trip-top {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .status-flow,
+      .route-line {
+        align-items: flex-start;
+        border-radius: 24px;
+        flex-direction: column;
+      }
+
+      .route-seg {
+        width: 3px;
+        height: 22px;
+        flex: none;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+
+      .reveal-on-scroll {
+        opacity: 1;
+        filter: none;
+        transform: none;
+      }
+
+      .login-overlay,
+      .login-modal {
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="water-nav" aria-label="官网导航">
+      <a class="brand" href="#top" aria-label="TripAgent Flow 首页">
+        <span class="brand-mark">✈️</span>
+        <span>
+          <h1>TripAgent Flow</h1>
+          <span>智能旅游规划 Agent 编排平台</span>
+        </span>
+      </a>
+      <div class="nav-links">
+        <a href="#product">产品介绍</a>
+        <a href="#scenarios">使用场景</a>
+        <a href="#demo">Demo 行程</a>
+        <a href="#value">核心价值</a>
+      </div>
+      <a class="nav-cta" href="#login" data-login-trigger>开始规划</a>
+    </nav>
+
+    <main id="top">
+      <section class="hero" id="product">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <div class="eyebrow">柔和光感 · 结构化生成 · 行程产品化</div>
+            <h2><span class="shine">让旅行计划</span><br />像水面一样自然浮现</h2>
+            <p class="hero-text">
+              TripAgent Flow 是一个可以生成、保存、调整与导出旅行计划的 Agent 编排平台。
+              它把一句自然语言需求转成每日路线、预算拆分、任务状态与反馈闭环，而不是只给你一大段聊天回答。
+            </p>
+
+            <div class="hero-actions">
+              <a class="primary-btn" href="#login" data-login-trigger>开始规划</a>
+              <a class="ghost-btn" href="#scenarios">看看适合谁用</a>
+            </div>
+
+            <div class="prompt-panel" aria-label="旅行需求输入示例">
+              <div class="prompt-bar">
+                <button class="round-icon" type="button" aria-label="添加偏好">＋</button>
+                <input id="quickPrompt" value="" placeholder="我想从上海去成都，4天，预算3500，喜欢美食和历史文化" />
+                <select class="soft-select" aria-label="旅行模式">
+                  <option>均衡游</option>
+                  <option>省钱游</option>
+                  <option>深度游</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <aside class="floating-board" aria-label="Demo 行程预览">
+            <div class="trip-card">
+              <div class="trip-top">
+                <div>
+                  <h3>成都 4 日美食与历史文化行程</h3>
+                  <p>Agent 根据预算、节奏和偏好自动拆分每日路线。</p>
+                </div>
+                <span class="pill">生成中</span>
+              </div>
+              <div class="route-line">
+                <span class="route-dot"></span>
+                <span>宽窄巷子</span>
+                <span class="route-seg"></span>
+                <span>人民公园</span>
+                <span class="route-seg"></span>
+                <span>锦里</span>
+              </div>
+              <div class="metric-row">
+                <div class="metric"><b>4 天</b><span>MVP 支持 3 到 7 天</span></div>
+                <div class="metric"><b>¥3500</b><span>总预算与每日预算</span></div>
+              </div>
+            </div>
+
+            <div class="trip-card">
+              <div class="trip-top">
+                <div>
+                  <h3>Agent 任务状态</h3>
+                  <p>长任务不让用户等待在黑盒里，失败任务可重试。</p>
+                </div>
+                <span class="pill">可追踪</span>
+              </div>
+              <div class="status-flow">
+                <span class="status-node active">待生成</span>
+                <span class="status-node active">生成中</span>
+                <span class="status-node">成功</span>
+              </div>
+            </div>
+
+            <div class="trip-card">
+              <div class="trip-top">
+                <div>
+                  <h3>保存、重生成、导出</h3>
+                  <p>一次生成不是终点，计划会进入旅行库继续调整。</p>
+                </div>
+                <span class="pill">MVP</span>
+              </div>
+              <div class="chip-row">
+                <span class="chip">历史计划</span>
+                <span class="chip">预算拆分</span>
+                <span class="chip">PDF 占位</span>
+                <span class="chip">反馈闭环</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section" id="scenarios">
+        <div class="section-head">
+          <div>
+            <h2>典型使用场景</h2>
+            <p>首页要让用户立刻知道：这不是聊天工具，而是能把需求变成可执行 itinerary 的旅行工作台入口。</p>
+          </div>
+        </div>
+
+        <div class="glass-grid">
+          <article class="glass-card scenario col-3">
+            <span class="scenario-icon">🌤️</span>
+            <h3>周末短途</h3>
+            <p>输入出发地、目的地和 3 天时间，快速生成轻量路线，适合临时起意的城市周边游。</p>
+          </article>
+          <article class="glass-card scenario col-3">
+            <span class="scenario-icon">💧</span>
+            <h3>预算自由行</h3>
+            <p>把预算拆到交通、住宿、餐饮和门票，帮助用户在总价内选择更舒服的节奏。</p>
+          </article>
+          <article class="glass-card scenario col-3">
+            <span class="scenario-icon">🏛️</span>
+            <h3>深度文化游</h3>
+            <p>偏好不再只是标签，而会影响地点排序、每日主题、停留节奏和注意事项。</p>
+          </article>
+          <article class="glass-card scenario col-3">
+            <span class="scenario-icon">📈</span>
+            <h3>运营监控</h3>
+            <p>后台关注热门目的地、任务成功率、失败原因和用户反馈，让生成质量可持续优化。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="demo">
+        <div class="section-head">
+          <div>
+            <h2>Demo 行程展示</h2>
+            <p>参考 Wanderlog 的产品表达方式：首页直接展示“生成后会得到什么”，而不是只解释 AI 有多聪明。</p>
+          </div>
+          <a class="ghost-btn" href="#value">继续看价值</a>
+        </div>
+
+        <div class="demo-board">
+          <article class="glass-card">
+            <div class="trip-top">
+              <div>
+                <h3>成都 4 日轻松行程</h3>
+                <p>上海出发 · 2026.05.01 - 2026.05.04 · 均衡节奏</p>
+              </div>
+              <span class="pill">已保存</span>
+            </div>
+
+            <div class="day-list">
+              <div class="day-item">
+                <strong>Day 1 · 抵达与城市初体验</strong>
+                <div class="time-row"><span>10:30</span><b>抵达成都</b><span>¥60</span></div>
+                <div class="time-row"><span>14:00</span><b>宽窄巷子</b><span>¥120</span></div>
+                <div class="time-row"><span>18:30</span><b>锦里夜游</b><span>¥180</span></div>
+              </div>
+              <div class="day-item">
+                <strong>Day 2 · 历史文化路线</strong>
+                <div class="time-row"><span>09:00</span><b>武侯祠</b><span>¥80</span></div>
+                <div class="time-row"><span>13:30</span><b>杜甫草堂</b><span>¥120</span></div>
+                <div class="time-row"><span>19:00</span><b>川菜体验</b><span>¥220</span></div>
+              </div>
+              <div class="day-item">
+                <strong>Day 3 · 休闲美食与公园</strong>
+                <div class="time-row"><span>10:00</span><b>人民公园</b><span>¥60</span></div>
+                <div class="time-row"><span>15:00</span><b>太古里</b><span>¥160</span></div>
+                <div class="time-row"><span>20:00</span><b>火锅晚餐</b><span>¥260</span></div>
+              </div>
+            </div>
+          </article>
+
+          <aside class="glass-card">
+            <h3>路线地图感视图</h3>
+            <p>列表和路线视觉并存，强化“行程编辑台”而不是纯聊天回答。</p>
+            <div class="map-mock" aria-hidden="true">
+              <div class="map-line"></div>
+              <div class="map-pin pin-a"></div>
+              <div class="map-pin pin-b"></div>
+              <div class="map-pin pin-c"></div>
+            </div>
+
+            <h3 style="margin-top:20px;">预算拆分</h3>
+            <div class="budget-bars">
+              <div class="budget-row"><span>交通</span><div class="bar"><span style="width: 38%"></span></div><span>¥900</span></div>
+              <div class="budget-row"><span>餐饮</span><div class="bar"><span style="width: 62%"></span></div><span>¥1200</span></div>
+              <div class="budget-row"><span>门票</span><div class="bar"><span style="width: 24%"></span></div><span>¥420</span></div>
+              <div class="budget-row"><span>住宿</span><div class="bar"><span style="width: 52%"></span></div><span>¥980</span></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section" id="value">
+        <div class="section-head">
+          <div>
+            <h2>核心价值</h2>
+            <p>MVP 的重点是把“生成结果”产品化：可读、可保存、可重生成、可导出、可被运营分析。</p>
+          </div>
+        </div>
+
+        <div class="glass-grid">
+          <article class="glass-card col-4">
+            <h3>结构化行程</h3>
+            <p>输出稳定 JSON 背后的页面表达是每日卡片、时间段、地点、成本和注意事项，让结果可以继续编辑。</p>
+          </article>
+          <article class="glass-card col-4">
+            <h3>旅行库沉淀</h3>
+            <p>历史计划不是消息记录，而是用户的“我的行程库”，支持打开、重生成、导出和继续反馈。</p>
+          </article>
+          <article class="glass-card col-4">
+            <h3>任务健康闭环</h3>
+            <p>管理员能看热门目的地、成功率、失败任务和反馈评分，把 Agent 的质量运营起来。</p>
+          </article>
+        </div>
+
+        <div class="final-cta">
+          <div>
+            <h2>先从一个可执行行程开始</h2>
+            <p>这个静态首页版本用于确认官网前台的第一感觉。风格确认后，再把它迁移到 Next.js App Router。</p>
+          </div>
+          <a class="primary-btn" href="#login" data-login-trigger>登录后继续规划</a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="login-overlay" id="loginOverlay" aria-hidden="true">
+    <section class="login-modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <button class="modal-close" type="button" id="closeLogin" aria-label="关闭登录弹窗">×</button>
+      <div class="login-content">
+        <span class="login-kicker">账号同步 · 保存旅行库</span>
+        <h2 id="loginTitle">登录后保存你的旅行计划</h2>
+        <p>生成、重生成、导出和历史记录都会绑定到你的账号。现在先用一个轻量登录浮窗模拟正式链路。</p>
+
+        <div class="login-fields">
+          <div class="login-field">
+            <label for="loginAccount">手机号 / 邮箱</label>
+            <input id="loginAccount" placeholder="trip@example.com" autocomplete="email" />
+          </div>
+          <div class="login-field">
+            <label for="loginCode">验证码 / 密码</label>
+            <input id="loginCode" placeholder="输入验证码或密码" type="password" autocomplete="current-password" />
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="primary-btn" type="button" id="continuePlanning">继续规划</button>
+          <button class="ghost-btn" type="button" id="skipLogin">稍后再说，先看 Demo</button>
+        </div>
+        <div class="modal-note">注册即创建账号 · 第一版只做视觉与交互占位</div>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast">已收到需求，正式版本会进入规划页生成结构化行程</div>
+
+  <script>
+    const toast = document.getElementById("toast");
+    const quickPrompt = document.getElementById("quickPrompt");
+    const loginOverlay = document.getElementById("loginOverlay");
+    const loginAccount = document.getElementById("loginAccount");
+    const motionAllowed = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    function showToast() {
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 2400);
+    }
+
+    function openLogin(event) {
+      event?.preventDefault();
+      loginOverlay.classList.add("open");
+      loginOverlay.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      setTimeout(() => loginAccount?.focus(), 220);
+    }
+
+    function closeLogin() {
+      loginOverlay.classList.remove("open");
+      loginOverlay.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+    }
+
+    function setupWaterReveal() {
+      const revealTargets = [
+        ...document.querySelectorAll(".section-head"),
+        ...document.querySelectorAll(".glass-card"),
+        ...document.querySelectorAll(".demo-board"),
+        ...document.querySelectorAll(".final-cta")
+      ];
+
+      revealTargets.forEach((target, index) => {
+        target.classList.add("reveal-on-scroll");
+        target.style.setProperty("--reveal-delay", `${Math.min(index % 4, 3) * 90}ms`);
+      });
+
+      document.querySelectorAll(".demo-board > :first-child").forEach((target) => {
+        target.dataset.reveal = "left";
+      });
+
+      document.querySelectorAll(".demo-board > :last-child").forEach((target) => {
+        target.dataset.reveal = "right";
+      });
+
+      if (!motionAllowed || !("IntersectionObserver" in window)) {
+        revealTargets.forEach((target) => target.classList.add("is-visible"));
+        return;
+      }
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          const section = entry.target.closest(".section");
+
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            section?.classList.add("water-surfaced");
+            return;
+          }
+
+          entry.target.classList.remove("is-visible");
+
+          if (section && !section.querySelector(".reveal-on-scroll.is-visible")) {
+            section.classList.remove("water-surfaced");
+          }
+        });
+      }, {
+        threshold: 0.16,
+        rootMargin: "0px 0px -8% 0px"
+      });
+
+      revealTargets.forEach((target) => observer.observe(target));
+    }
+
+    document.querySelectorAll("[data-login-trigger]").forEach((button) => {
+      button.addEventListener("click", openLogin);
+    });
+
+    document.getElementById("closeLogin")?.addEventListener("click", closeLogin);
+
+    loginOverlay?.addEventListener("click", (event) => {
+      if (event.target === loginOverlay) closeLogin();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && loginOverlay.classList.contains("open")) {
+        closeLogin();
+      }
+    });
+
+    document.getElementById("continuePlanning")?.addEventListener("click", () => {
+      closeLogin();
+      showToast();
+    });
+
+    document.getElementById("skipLogin")?.addEventListener("click", () => {
+      closeLogin();
+      document.getElementById("demo")?.scrollIntoView({ behavior: "smooth" });
+    });
+
+    quickPrompt?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        openLogin(event);
+      }
+    });
+
+    setupWaterReveal();
+  </script>
+</body>
+</html>

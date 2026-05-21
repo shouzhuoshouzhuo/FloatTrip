@@ -1,1 +1,5 @@
 .DS_Store
+diary/
+.env
+.env.*
+!.env.example
