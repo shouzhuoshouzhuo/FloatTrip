@@ -1,6 +1,34 @@
 # FloatTrip
 
-FloatTrip 是一个旅游规划 Agent 项目。它希望把旅行规划做成一种轻松、顺滑的体验：用户给出目的地、天数和偏好后，系统逐步汇总信息源、筛出真实景点、按区域组织候选点，并继续生成可执行的每日路线与自然语言行程。
+> 让旅行规划像浮在平静水面上一样自然展开。
+
+FloatTrip 是一个旅游规划 Agent。用户给出目的地、天数和偏好后，它会从旅行信息源中汇总候选景点，过滤真实 POI，按区域组织每日候选点，并继续走向可执行路线和自然语言行程生成。
+
+## Why FloatTrip
+
+- 从攻略网页和 markdown 信息源抽取候选景点，而不是只给一段聊天答案
+- 用高德 POI 过滤与坐标补齐，让候选池逐步落到真实地点
+- 按地理区域聚类分天，为后续通行时间路线优化准备结构化输入
+- 用现代柔和、淡蓝光感和悬浮水面感承载一键旅行规划体验
+
+## Homepage Preview
+
+| 旅行规划入口 | 首页价值展示 |
+| --- | --- |
+| ![FloatTrip 首页规划入口](static/image/indeximage1.png) | ![FloatTrip 首页使用场景](static/image/image%20copy.png) |
+
+![FloatTrip 首页登录与旅行库入口](static/image/image.png)
+
+## Changelog
+
+每次向 GitHub 推送版本时，在这里记录本次新增能力和关键调整。
+
+### 2026-05-23
+
+- 补齐旅行攻略抓取、markdown 候选景点抽取、高德 POI 过滤与坐标补全链路
+- 增加按地理距离聚类分天与聚类调试地图，为后续按通行时间规划日路线打底
+- 增加搜索源、候选池、POI 和地图渲染相关工具说明与测试
+- 在 README 增加三张官网首页示例图，并建立版本 Changelog 记录约定
 
 ## 产品方向
 
@@ -84,8 +112,8 @@ python3 tools/render_geo_day_clusters_map.py /tmp/amap_candidates.json --days 3 
 
 - `tools/`：旅行信息搜索、候选池抽取、POI 过滤、聚类和调试地图工具
 - `static/docs/`：产品 PRD 与前端原型页面
-- `assets/`：README 和原型使用的静态素材
-- `web.md`：网页内容抓取和旅行信息源实验材料
+- `assets/`：README 和原型使用的早期静态素材
+- `static/image/`：官网首页与原型示例图片
 
 ## 前端原型
 
@@ -94,8 +122,6 @@ python3 tools/render_geo_day_clusters_map.py /tmp/amap_candidates.json --days 3 
 - `static/docs/preview.html`
 - `static/docs/indexv1.html`
 - `static/docs/plannerv1.html`
-
-![FloatTrip 示例图](assets/floattrip-demo.svg)
 
 ## 下一步
 
