@@ -82,6 +82,17 @@ python3 tools/render_geo_day_clusters_map.py /tmp/amap_candidates.json --days 3 
 
 地图上的彩色点参与本轮聚类；灰点是按 `score` 优先、`mention_count` 回退排序后落在 `days * 4` 截断窗口外的候选。
 
+### 高德真实 POI 再接每日公交路线 JSON
+
+高德过滤后的候选池也可以直接进入每日路线规划。工具会先复用地理分天聚类，再用高德公交路径规划生成每天景点之间的通行时间矩阵，并用暴力枚举选出当天最短访问顺序：
+
+```bash
+python3 tools/amap_poi_filter.py /tmp/candidates.json --json > /tmp/amap_candidates.json
+python3 tools/plan_daily_transit_routes.py /tmp/amap_candidates.json --days 3 --output /tmp/daily_transit_routes.json
+```
+
+输出 JSON 的 `schema_version` 为 `floattrip_daily_transit_routes.v1`，包含 `spots`、`duration_matrix_seconds`、`optimized_order`、`route_segments` 和每日汇总指标。当前只输出结构化 JSON，不渲染地图。
+
 ## `baidu_web_search_raw.py`
 
 用途：调用百度 AppBuilder 非 AI 网页搜索接口 `/v2/ai_search/web_search`，直接输出原始 JSON，方便观察 `references` 的原始结构。不做候选池、LLM 总结、去重或排序。

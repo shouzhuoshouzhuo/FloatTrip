@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FloatTrip 南京路线地图</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root {
+      --ink: #123246;
+      --muted: #5f7b8f;
+      --faint: #8ba8bb;
+      --line: rgba(72, 151, 197, .18);
+      --panel: rgba(255, 255, 255, .78);
+      --panel-strong: rgba(255, 255, 255, .92);
+      --blue: #3aa8ef;
+      --cyan: #4ed7e8;
+      --green: #49bd8d;
+      --orange: #e9a84d;
+      --shadow: rgba(52, 124, 174, .16);
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      color: var(--ink);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 12% 12%, rgba(99, 203, 255, .34), transparent 34%),
+        radial-gradient(circle at 92% 8%, rgba(121, 178, 255, .24), transparent 32%),
+        linear-gradient(180deg, #fbfdff 0%, #edf9ff 44%, #d2f0ff 100%);
+      overflow: hidden;
+    }
+
+    button {
+      border: 0;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
+      gap: 18px;
+      height: 100%;
+      padding: 18px;
+    }
+
+    .panel {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, .7);
+      border-radius: 28px;
+      background: var(--panel);
+      box-shadow: 0 22px 70px var(--shadow), inset 0 1px 0 rgba(255,255,255,.8);
+      backdrop-filter: blur(22px) saturate(150%);
+      -webkit-backdrop-filter: blur(22px) saturate(150%);
+      overflow: hidden;
+    }
+
+    .header {
+      padding: 24px 24px 18px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.62), rgba(232,248,255,.42)),
+        repeating-linear-gradient(110deg, rgba(91, 183, 238, .08) 0 1px, transparent 1px 16px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 15px;
+      background:
+        radial-gradient(circle at 30% 22%, rgba(255,255,255,.96), transparent 36%),
+        linear-gradient(145deg, #93e4ff, #5ab6f5 54%, #5cd1c9);
+      box-shadow: 0 16px 32px rgba(54, 160, 222, .25);
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 16px;
+      letter-spacing: .02em;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 38px;
+      line-height: 1.03;
+      letter-spacing: 0;
+    }
+
+    .subhead {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255,255,255,.54);
+    }
+
+    .metric b {
+      display: block;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .day-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .day-tab {
+      min-height: 44px;
+      border-radius: 8px;
+      color: #226a96;
+      background: rgba(255,255,255,.55);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
+      font-weight: 800;
+      transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
+    }
+
+    .day-tab:hover {
+      transform: translateY(-1px);
+    }
+
+    .day-tab.active {
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      box-shadow: 0 12px 26px rgba(50, 157, 222, .24);
+    }
+
+    .content {
+      min-height: 0;
+      overflow: auto;
+      padding: 16px 18px 22px;
+    }
+
+    .day-card {
+      display: none;
+      animation: rise .28s ease both;
+    }
+
+    .day-card.active {
+      display: block;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .day-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    .day-title h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .pill {
+      flex: none;
+      padding: 7px 10px;
+      border: 1px solid rgba(68, 170, 220, .25);
+      border-radius: 999px;
+      color: #2374a5;
+      background: rgba(239, 250, 255, .74);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .stops {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0 18px;
+    }
+
+    .stop {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 11px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255,255,255,.62);
+    }
+
+    .number {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: linear-gradient(145deg, var(--blue), var(--green));
+      font-size: 14px;
+      font-weight: 900;
+      box-shadow: 0 10px 24px rgba(66, 169, 215, .24);
+    }
+
+    .stop strong {
+      display: block;
+      overflow-wrap: anywhere;
+      font-size: 15px;
+    }
+
+    .stop span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .segments {
+      display: grid;
+      gap: 9px;
+    }
+
+    .segment {
+      padding: 13px 14px;
+      border-left: 3px solid var(--blue);
+      border-radius: 8px;
+      background: rgba(248, 253, 255, .74);
+    }
+
+    .segment-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: #174560;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .segment-head span:last-child {
+      flex: none;
+      color: #0f78ad;
+    }
+
+    .segment p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .map-wrap {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: 0 26px 80px rgba(28, 105, 157, .18);
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+      background: #d9f2ff;
+    }
+
+    .map-overlay {
+      position: absolute;
+      left: 18px;
+      top: 18px;
+      z-index: 500;
+      width: min(420px, calc(100% - 36px));
+      padding: 14px 16px;
+      border: 1px solid rgba(255,255,255,.78);
+      border-radius: 8px;
+      background: rgba(255,255,255,.8);
+      box-shadow: 0 16px 42px rgba(42, 120, 170, .18);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .map-overlay strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .map-overlay span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .legend {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      z-index: 500;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      max-width: min(520px, calc(100% - 36px));
+      padding: 10px;
+      border: 1px solid rgba(255,255,255,.76);
+      border-radius: 999px;
+      background: rgba(255,255,255,.78);
+      box-shadow: 0 16px 42px rgba(42, 120, 170, .16);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .legend button {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 11px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .legend button.active {
+      color: #0d638f;
+      background: rgba(234, 249, 255, .92);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .leaflet-popup-content-wrapper {
+      border-radius: 8px;
+      box-shadow: 0 18px 48px rgba(30, 99, 145, .22);
+    }
+
+    .popup h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+    }
+
+    .popup p {
+      margin: 0;
+      color: #5f7b8f;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 920px) {
+      body { overflow: auto; }
+      .app {
+        height: auto;
+        min-height: 100%;
+        grid-template-columns: 1fr;
+      }
+      .panel { min-height: auto; }
+      .map-wrap {
+        height: 70vh;
+        min-height: 520px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .app { padding: 10px; }
+      h1 { font-size: 30px; }
+      .metrics { grid-template-columns: 1fr; }
+      .day-tabs { grid-template-columns: 1fr; }
+      .legend { border-radius: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="panel" aria-label="路线规划详情">
+      <section class="header">
+        <div class="brand">
+          <div class="mark" aria-hidden="true"></div>
+          <div>
+            <strong>FloatTrip</strong>
+            <span>南京三日公交路线规划</span>
+          </div>
+        </div>
+        <h1>像水流一样排好的南京路线</h1>
+        <p class="subhead">基于高德公交通行时间矩阵，对每天候选景点做最短访问顺序枚举。当前页面展示本次工具链生成的 JSON 结果。</p>
+        <div class="metrics">
+          <div class="metric"><b>3</b><span>天行程</span></div>
+          <div class="metric"><b>11</b><span>入选景点</span></div>
+          <div class="metric"><b>2.9h</b><span>约通行</span></div>
+        </div>
+      </section>
+      <nav class="day-tabs" aria-label="选择天数"></nav>
+      <section class="content" id="dayContent"></section>
+    </aside>
+
+    <section class="map-wrap" aria-label="路线地图">
+      <div id="map"></div>
+      <div class="map-overlay">
+        <strong id="mapTitle">南京三日路线总览</strong>
+        <span id="mapSummary">切换左侧天数查看当天路线，地图会聚焦到对应点位和公交访问顺序。</span>
+      </div>
+      <div class="legend" aria-label="地图图例"></div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const routePlan = {
+      destination: "南京",
+      days: [
+        {
+          day_index: 1,
+          title: "市中心与玄武湖片区",
+          color: "#2f9fe8",
+          summary: { total_duration_minutes: 64.2, spot_count: 4 },
+          spots: [
+            { spot_id: "poi-古鸡鸣寺", name: "古鸡鸣寺", address: "鸡鸣寺路1号钟山风景名胜区玄武湖景区内西南侧", location: { lng: 118.795246, lat: 32.061061 } },
+            { spot_id: "poi-六朝博物馆", name: "六朝博物馆", address: "长江路302号", location: { lng: 118.799124, lat: 32.04284 } },
+            { spot_id: "poi-总统府", name: "总统府", address: "新街口街道", location: { lng: 118.797398, lat: 32.044228 } },
+            { spot_id: "poi-玄武湖", name: "玄武湖", address: "玄武区", location: { lng: 118.801541, lat: 32.072217 } }
+          ],
+          route_segments: [
+            { from_name: "古鸡鸣寺", to_name: "六朝博物馆", duration_minutes: 23.3, distance_meters: 2724, walking_distance_meters: 549, cost: "2.0", summary: "304路：鸡鸣寺 -> 总统府" },
+            { from_name: "六朝博物馆", to_name: "总统府", duration_minutes: 3.0, distance_meters: 224, walking_distance_meters: 224, cost: null, summary: "近距离步行约 0.2 km", fallback_mode: "walking" },
+            { from_name: "总统府", to_name: "玄武湖", duration_minutes: 38.0, distance_meters: 6401, walking_distance_meters: 1887, cost: "3.0", summary: "地铁3号线：大行宫 -> 南京林业大学·新庄" }
+          ]
+        },
+        {
+          day_index: 2,
+          title: "秦淮与牛首山",
+          color: "#44b58a",
+          summary: { total_duration_minutes: 22.9, spot_count: 3 },
+          spots: [
+            { spot_id: "poi-瞻园", name: "瞻园", address: "瞻园路128号", location: { lng: 118.785163, lat: 32.021034 } },
+            { spot_id: "poi-南京夫子庙", name: "南京夫子庙", address: "贡院街152号", location: { lng: 118.788899, lat: 32.02066 } },
+            { spot_id: "poi-中华门", name: "中华门", address: "秦淮区", location: { lng: 118.781821, lat: 32.0128 } }
+          ],
+          route_segments: [
+            { from_name: "瞻园", to_name: "南京夫子庙", duration_minutes: 4.7, distance_meters: 355, walking_distance_meters: 355, cost: null, summary: "近距离步行约 0.4 km", fallback_mode: "walking" },
+            { from_name: "南京夫子庙", to_name: "中华门", duration_minutes: 18.2, distance_meters: 1520, walking_distance_meters: 478, cost: "2.0", summary: "G1路：东牌楼·夫子庙 -> 中华门城堡" }
+          ]
+        },
+        {
+          day_index: 3,
+          title: "钟山与南京博物院",
+          color: "#e39b38",
+          summary: { total_duration_minutes: 88.7, spot_count: 4 },
+          spots: [
+            { spot_id: "poi-中山陵南广场", name: "中山陵南广场", address: "石象路7号", location: { lng: 118.852363, lat: 32.054183 } },
+            { spot_id: "poi-钟山风景名胜区", name: "钟山风景名胜区", address: "石象路7号", location: { lng: 118.844293, lat: 32.064907 } },
+            { spot_id: "poi-明孝陵景区", name: "明孝陵景区", address: "石象路7号", location: { lng: 118.840463, lat: 32.051926 } },
+            { spot_id: "poi-南京博物院", name: "南京博物院", address: "中山东路321号", location: { lng: 118.825064, lat: 32.040802 } }
+          ],
+          route_segments: [
+            { from_name: "中山陵南广场", to_name: "钟山风景名胜区", duration_minutes: 38.2, distance_meters: 3141, walking_distance_meters: 1901, cost: "10.0", summary: "大环线：中山陵 -> 明孝陵7号门" },
+            { from_name: "钟山风景名胜区", to_name: "明孝陵景区", duration_minutes: 19.8, distance_meters: 1488, walking_distance_meters: 1488, cost: null, summary: "近距离步行约 1.5 km", fallback_mode: "walking" },
+            { from_name: "明孝陵景区", to_name: "南京博物院", duration_minutes: 30.5, distance_meters: 2755, walking_distance_meters: 1185, cost: "2.0", summary: "G33路：中山植物园 -> 中山门" }
+          ]
+        }
+      ]
+    };
+
+    const map = L.map("map", { zoomControl: false });
+    L.control.zoom({ position: "bottomleft" }).addTo(map);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19
+    }).addTo(map);
+
+    const allLayers = L.layerGroup().addTo(map);
+    const activeLayers = L.layerGroup().addTo(map);
+    const tabs = document.querySelector(".day-tabs");
+    const content = document.getElementById("dayContent");
+    const legend = document.querySelector(".legend");
+    const mapTitle = document.getElementById("mapTitle");
+    const mapSummary = document.getElementById("mapSummary");
+
+    routePlan.days.forEach((day, index) => {
+      const tab = document.createElement("button");
+      tab.className = `day-tab${index === 0 ? " active" : ""}`;
+      tab.textContent = `Day ${day.day_index}`;
+      tab.addEventListener("click", () => selectDay(index));
+      tabs.appendChild(tab);
+
+      const legendButton = document.createElement("button");
+      legendButton.className = index === 0 ? "active" : "";
+      legendButton.innerHTML = `<span class="dot" style="background:${day.color}"></span>Day ${day.day_index}`;
+      legendButton.addEventListener("click", () => selectDay(index));
+      legend.appendChild(legendButton);
+
+      const card = document.createElement("article");
+      card.className = `day-card${index === 0 ? " active" : ""}`;
+      card.innerHTML = renderDay(day);
+      content.appendChild(card);
+    });
+
+    drawOverview();
+    selectDay(0);
+
+    function renderDay(day) {
+      const stops = day.spots.map((spot, index) => `
+        <div class="stop">
+          <div class="number">${index + 1}</div>
+          <div>
+            <strong>${spot.name}</strong>
+            <span>${spot.address}<br>${spot.location.lng}, ${spot.location.lat}</span>
+          </div>
+        </div>
+      `).join("");
+
+      const segments = day.route_segments.map(segment => `
+        <div class="segment">
+          <div class="segment-head">
+            <span>${segment.from_name} -> ${segment.to_name}</span>
+            <span>${segment.duration_minutes} 分钟</span>
+          </div>
+          <p>${formatKm(segment.distance_meters)}，步行 ${formatKm(segment.walking_distance_meters)}，${formatCost(segment.cost)}。${segment.summary}</p>
+        </div>
+      `).join("");
+
+      return `
+        <div class="day-title">
+          <div>
+            <h2>Day ${day.day_index} · ${day.title}</h2>
+            <p class="subhead">${day.summary.spot_count} 个景点，约 ${day.summary.total_duration_minutes} 分钟公交通行。</p>
+          </div>
+          <span class="pill">最短顺序</span>
+        </div>
+        <div class="stops">${stops}</div>
+        <div class="segments">${segments}</div>
+      `;
+    }
+
+    function selectDay(index) {
+      document.querySelectorAll(".day-tab").forEach((tab, tabIndex) => {
+        tab.classList.toggle("active", tabIndex === index);
+      });
+      document.querySelectorAll(".day-card").forEach((card, cardIndex) => {
+        card.classList.toggle("active", cardIndex === index);
+      });
+      document.querySelectorAll(".legend button").forEach((button, buttonIndex) => {
+        button.classList.toggle("active", buttonIndex === index);
+      });
+
+      const day = routePlan.days[index];
+      mapTitle.textContent = `Day ${day.day_index} · ${day.title}`;
+      mapSummary.textContent = `${day.summary.spot_count} 个景点，约 ${day.summary.total_duration_minutes} 分钟公交通行。`;
+      drawDay(day);
+    }
+
+    function drawOverview() {
+      routePlan.days.forEach(day => {
+        const latlngs = day.spots.map(spot => [spot.location.lat, spot.location.lng]);
+        L.polyline(latlngs, {
+          color: day.color,
+          weight: 3,
+          opacity: .24,
+          dashArray: "5 9"
+        }).addTo(allLayers);
+      });
+    }
+
+    function drawDay(day) {
+      activeLayers.clearLayers();
+      const latlngs = day.spots.map(spot => [spot.location.lat, spot.location.lng]);
+      L.polyline(latlngs, {
+        color: day.color,
+        weight: 6,
+        opacity: .84,
+        lineCap: "round",
+        lineJoin: "round"
+      }).addTo(activeLayers);
+
+      day.spots.forEach((spot, index) => {
+        const marker = L.divIcon({
+          className: "",
+          html: `<div style="
+            width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+            color:white;font-weight:900;font-size:14px;background:${day.color};
+            box-shadow:0 12px 28px rgba(30,108,160,.28), 0 0 0 7px rgba(255,255,255,.72);
+            border:2px solid rgba(255,255,255,.96);">${index + 1}</div>`,
+          iconSize: [34, 34],
+          iconAnchor: [17, 17]
+        });
+        L.marker([spot.location.lat, spot.location.lng], { icon: marker })
+          .bindPopup(`
+            <div class="popup">
+              <h3>${index + 1}. ${spot.name}</h3>
+              <p>${spot.address}<br>${spot.location.lng}, ${spot.location.lat}</p>
+            </div>
+          `)
+          .addTo(activeLayers);
+      });
+
+      map.fitBounds(latlngs, { padding: [76, 76], maxZoom: 14 });
+    }
+
+    function formatKm(meters) {
+      return `${(meters / 1000).toFixed(1)} km`;
+    }
+
+    function formatCost(cost) {
+      return cost ? `费用 ${cost} 元` : "无需公交费用";
+    }
+  </script>
+</body>
+</html>

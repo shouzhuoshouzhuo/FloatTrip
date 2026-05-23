@@ -29,7 +29,9 @@ agent测试 and 迭代：langsmith
 暴力枚举 / 2-opt 求当天最短访问顺序
   ↓
 LLM 生成自然语言行程
-目前已经实现的是1. 网页内容抓取
+目前已经实现的是：
+
+1. 网页内容抓取
    tools/fetch_webpage_content.py
         ↓
 2. markdown 信息源
@@ -52,5 +54,32 @@ LLM 生成自然语言行程
         ↓
 8. 可视化调试地图
    tools/render_geo_day_clusters_map.py
-后续需要加上对每天的景点进行路线规划，按通行时间规划，最终生成当天在地图上显示的路线图
-这个可视化调试地图只是开发阶段用，正式前端准备给用户一个高德地图显示规划好的路线
+        ↓
+9. 每日公交路线规划 JSON
+   tools/plan_daily_transit_routes.py
+        ↓
+10. 调用高德公交 / 步行路径，生成真实通行时间矩阵与真实 polyline 路径
+    - 公交通行时间用于暴力枚举当天最短访问顺序
+    - 近距离无公交路线时，用高德步行路径兜底
+    - 每段路线输出真实 path，不画简单两点连线
+        ↓
+11. planner v2 前端路线预览
+    static/docs/plannerv2.html
+    - 已集成高德 JS 地图
+    - 已展示按天路线、访问顺序、公交/步行路段、预算式指标区域雏形
+    - 地图中展示的是高德返回的真实行径路线
+
+当前说明：
+
+- tools/render_geo_day_clusters_map.py 仍然只是开发阶段的聚类调试地图。
+- 正式前端路线展示入口已经推进到 planner v2，使用高德地图显示规划好的每日路线。
+- 后续重点是把这条 tools 链路收敛进正式 Agent / FastAPI / app.floattrip.com 工作台流程，并继续补 LLM 生成自然语言行程、预算拆分、导出和再次生成能力。
+还有前端首页已经设计好/Users/chj/Desktop/旅游规划agent/static/docs/indexv1.html
+前端的用户页中的规划页也设计好/Users/chj/Desktop/旅游规划agent/static/docs/plannerv2.html
+下一步需要用户页的行程详情页 prd是这么写的#### 4. 行程详情页 `app:/trips/:id`
+
+核心功能：
+
+- 查看每日行程
+- 查看预算拆分
+- 再次生成和导出

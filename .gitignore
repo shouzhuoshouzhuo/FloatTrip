@@ -4,3 +4,5 @@ diary/
 .env.*
 !.env.example
 __pycache__/
+static/docs/amap-config.local.js
+static/docs/route-data.local.js

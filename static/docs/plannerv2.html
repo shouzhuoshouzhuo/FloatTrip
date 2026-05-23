@@ -448,7 +448,7 @@
 
     .route-card {
       padding: 24px;
-      min-height: 546px;
+      min-height: 620px;
     }
 
     .route-head {
@@ -506,7 +506,7 @@
 
     .map-shell {
       position: relative;
-      min-height: 422px;
+      min-height: 498px;
       border: 1px solid rgba(78,168,230,.2);
       border-radius: 28px;
       background:
@@ -519,47 +519,47 @@
       overflow: hidden;
     }
 
-    .map-shell::after {
-      content: "";
+    #amapRouteMap {
       position: absolute;
       inset: 0;
-      background:
-        radial-gradient(circle at 30% 70%, rgba(110,231,248,.14), transparent 28%),
-        radial-gradient(circle at 74% 24%, rgba(124,140,255,.08), transparent 26%);
-      pointer-events: none;
+      z-index: 0;
     }
 
-    .map-empty {
+    .map-status {
       position: absolute;
-      inset: 0;
-      z-index: 1;
-      display: grid;
-      place-items: center;
-      padding: 28px;
-      text-align: center;
+      z-index: 3;
+      left: 22px;
+      top: 18px;
+      max-width: 390px;
+      padding: 14px 16px;
+      border: 1px solid rgba(255,255,255,.74);
+      border-radius: 18px;
+      background: rgba(255,255,255,.82);
+      box-shadow: 0 14px 36px rgba(56,133,183,.12);
+      backdrop-filter: blur(14px);
     }
 
-    .map-empty strong {
+    .map-status strong {
       display: block;
-      margin-bottom: 8px;
-      font-size: 24px;
-      letter-spacing: -.035em;
+      margin-bottom: 5px;
+      font-size: 14px;
     }
 
-    .map-empty span {
+    .map-status span {
       color: var(--muted);
-      font-size: 14px;
-      line-height: 1.7;
+      font-size: 12px;
+      line-height: 1.55;
     }
 
     .metric-strip {
       position: absolute;
       z-index: 2;
       top: 18px;
-      right: 20px;
+      right: 24px;
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
+      max-width: 520px;
     }
 
     .metric-pill {
@@ -572,8 +572,10 @@
       position: absolute;
       z-index: 2;
       right: 28px;
-      top: 98px;
-      width: 150px;
+      top: 88px;
+      width: 238px;
+      max-height: 380px;
+      overflow: auto;
       padding: 18px;
       border-radius: 24px;
       background: rgba(255,255,255,.74);
@@ -588,7 +590,7 @@
 
     .stop-list {
       display: grid;
-      gap: 13px;
+      gap: 10px;
       margin: 0 0 14px;
       padding: 0;
       list-style: none;
@@ -602,6 +604,11 @@
       color: var(--ink);
       font-size: 12px;
       font-weight: 850;
+    }
+
+    .stop-list span {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .stop-list i {
@@ -622,6 +629,43 @@
       color: #226c98;
       background: rgba(221,246,255,.9);
       font-size: 12px;
+    }
+
+    .segment-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(74,159,218,.14);
+    }
+
+    .route-segment {
+      padding: 9px 10px;
+      border-left: 3px solid var(--blue);
+      border-radius: 12px;
+      background: rgba(247,253,255,.72);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .route-segment strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+
+    .route-segment span {
+      color: var(--muted);
+    }
+
+    .route-segment.missing {
+      border-left-color: var(--orange);
+    }
+
+    .amap-marker-label {
+      border: 0;
+      background: transparent;
+      box-shadow: none;
     }
 
     .lower-grid {
@@ -1031,40 +1075,31 @@
           <div class="route-head">
             <div class="route-title">
               <span class="pin" aria-hidden="true">•</span>
-              <h3 id="routeTitle">Amap 路线预览</h3>
+              <h3 id="routeTitle">高德真实路线预览</h3>
             </div>
             <div class="day-tabs" aria-label="切换每日路线">
               <button class="day-tab active" type="button">Day 1</button>
               <button class="day-tab" type="button">Day 2</button>
               <button class="day-tab" type="button">Day 3</button>
-              <button class="day-tab" type="button">Day 4</button>
             </div>
           </div>
 
-          <div class="map-shell" aria-label="高德地图路线占位区域">
-            <div class="metric-strip">
-              <span class="metric-pill">5 个景点</span>
-              <span class="metric-pill">总路程 12km</span>
-              <span class="metric-pill">预计 42 分钟</span>
-            </div>
+          <div class="map-shell" aria-label="高德真实路线地图">
+            <div id="amapRouteMap"></div>
+            <div class="metric-strip" id="routeMetrics"></div>
 
-            <div class="map-empty">
+            <div class="map-status" id="mapStatus">
               <div>
-                <strong>地图路线区域</strong>
-                <span>正式前端接入高德地图后，在这里显示每日路线、交通时间和访问顺序。</span>
+                <strong>正在加载高德地图</strong>
+                <span>路线将沿高德返回的真实道路和步行路径绘制。</span>
               </div>
             </div>
 
             <aside class="route-order" aria-label="路线顺序">
               <h4>路线顺序</h4>
-              <ol class="stop-list">
-                <li><i>1</i><span>宽窄巷子</span></li>
-                <li><i>2</i><span>人民公园</span></li>
-                <li><i>3</i><span>武侯祠</span></li>
-                <li><i>4</i><span>杜甫草堂</span></li>
-                <li><i>5</i><span>锦里</span></li>
-              </ol>
-              <button class="route-btn" type="button">优化路线</button>
+              <ol class="stop-list" id="routeStopList"></ol>
+              <button class="route-btn" type="button" id="fitRoute">聚焦路线</button>
+              <div class="segment-list" id="routeSegments"></div>
             </aside>
           </div>
         </article>
@@ -1141,7 +1176,16 @@
     const toast = document.getElementById("toast");
     const dayTabs = [...document.querySelectorAll(".day-tab")];
     const miniDays = [...document.querySelectorAll(".mini-day")];
+    const routeMetrics = document.getElementById("routeMetrics");
+    const routeStopList = document.getElementById("routeStopList");
+    const routeSegments = document.getElementById("routeSegments");
+    const mapStatus = document.getElementById("mapStatus");
+    const fitRouteButton = document.getElementById("fitRoute");
+    const routeColors = ["#2f9fe8", "#44b58a", "#e39b38"];
     let timers = [];
+    let routeMap = null;
+    let routeOverlays = [];
+    let activeRouteIndex = 0;
 
     const stageCopy = [
       ["18%", "需求理解已完成"],
@@ -1198,21 +1242,169 @@
       });
     }
 
+    function setMapStatus(title, body) {
+      mapStatus.innerHTML = `<div><strong>${title}</strong><span>${body}</span></div>`;
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = src;
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`无法加载 ${src}`));
+        document.head.appendChild(script);
+      });
+    }
+
+    async function bootAmapRoutePreview() {
+      try {
+        await Promise.all([
+          loadScript("amap-config.local.js"),
+          loadScript("route-data.local.js")
+        ]);
+      } catch (error) {
+        setMapStatus("缺少本地路线配置", "请确认 static/docs/amap-config.local.js 和 route-data.local.js 已存在。");
+        return;
+      }
+
+      const config = window.FLOATTRIP_AMAP_CONFIG || {};
+      if (!config.key) {
+        setMapStatus("缺少高德 JS Key", "请在 amap-config.local.js 中配置 key 后刷新页面。");
+        return;
+      }
+      window._AMapSecurityConfig = { securityJsCode: config.securityJsCode || "" };
+
+      try {
+        await loadScript(`https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(config.key)}`);
+      } catch (error) {
+        setMapStatus("高德地图加载失败", "请检查网络、高德 JS Key 和安全密钥配置。");
+        return;
+      }
+
+      routeMap = new AMap.Map("amapRouteMap", {
+        viewMode: "2D",
+        zoom: 12,
+        center: [118.796, 32.045],
+        mapStyle: "amap://styles/fresh",
+        resizeEnable: true
+      });
+      setMapStatus("真实行径路线", "线路沿高德返回的公交与步行 polyline 绘制，不再使用两点直线。");
+      renderRouteDay(0);
+    }
+
+    function currentRoutePlan() {
+      return window.FLOATTRIP_ROUTE_PLAN || { days: [] };
+    }
+
+    function renderRouteDay(index) {
+      const plan = currentRoutePlan();
+      const day = plan.days[index];
+      if (!day) return;
+      activeRouteIndex = index;
+
+      dayTabs.forEach((item, itemIndex) => item.classList.toggle("active", itemIndex === index));
+      miniDays.forEach((item, itemIndex) => item.classList.toggle("active", itemIndex === index));
+      renderRouteMetrics(day);
+      renderRouteOrder(day);
+      renderRouteSegments(day);
+      drawAmapRoute(day, routeColors[index % routeColors.length]);
+    }
+
+    function renderRouteMetrics(day) {
+      const distance = day.route_segments.reduce((sum, segment) => sum + (segment.distance_meters || 0), 0);
+      routeMetrics.innerHTML = [
+        `<span class="metric-pill">${day.summary.spot_count} 个景点</span>`,
+        `<span class="metric-pill">${(distance / 1000).toFixed(1)} km</span>`,
+        `<span class="metric-pill">${day.summary.total_duration_minutes} 分钟</span>`
+      ].join("");
+    }
+
+    function renderRouteOrder(day) {
+      const spotsById = Object.fromEntries(day.spots.map((spot) => [spot.spot_id, spot]));
+      routeStopList.innerHTML = day.optimized_order.map((spotId, index) => {
+        const spot = spotsById[spotId];
+        return `<li><i>${index + 1}</i><span>${spot?.name || "未知景点"}</span></li>`;
+      }).join("");
+    }
+
+    function renderRouteSegments(day) {
+      routeSegments.innerHTML = day.route_segments.map((segment) => {
+        const hasPath = Array.isArray(segment.path) && segment.path.length > 1;
+        const mode = segment.fallback_mode === "walking" ? "步行" : "公交";
+        return `
+          <div class="route-segment${hasPath ? "" : " missing"}">
+            <strong>${segment.from_name} -> ${segment.to_name}</strong>
+            <span>${mode} · ${segment.duration_minutes} 分钟 · ${formatKm(segment.distance_meters)}${hasPath ? "" : " · 路径待补全"}</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function drawAmapRoute(day, color) {
+      if (!routeMap || !window.AMap) return;
+      routeMap.remove(routeOverlays);
+      routeOverlays = [];
+      const spotsById = Object.fromEntries(day.spots.map((spot) => [spot.spot_id, spot]));
+
+      day.route_segments.forEach((segment) => {
+        if (!Array.isArray(segment.path) || segment.path.length < 2) return;
+        const polyline = new AMap.Polyline({
+          path: segment.path.map((point) => [point.lng, point.lat]),
+          strokeColor: segment.fallback_mode === "walking" ? "#42b883" : color,
+          strokeOpacity: 0.92,
+          strokeWeight: segment.fallback_mode === "walking" ? 5 : 7,
+          strokeStyle: segment.fallback_mode === "walking" ? "dashed" : "solid",
+          lineJoin: "round",
+          lineCap: "round",
+          zIndex: 20
+        });
+        routeMap.add(polyline);
+        routeOverlays.push(polyline);
+      });
+
+      day.optimized_order.forEach((spotId, index) => {
+        const spot = spotsById[spotId];
+        if (!spot) return;
+        const marker = new AMap.Marker({
+          position: [spot.location.lng, spot.location.lat],
+          anchor: "center",
+          content: `<div style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:white;font-weight:900;background:${color};border:3px solid rgba(255,255,255,.94);box-shadow:0 10px 24px rgba(32,110,160,.26);">${index + 1}</div>`,
+          offset: new AMap.Pixel(0, 0),
+          zIndex: 50
+        });
+        marker.setLabel({
+          direction: "right",
+          offset: new AMap.Pixel(14, -2),
+          content: `<div style="padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.82);color:#174560;font-size:12px;font-weight:800;box-shadow:0 8px 20px rgba(32,110,160,.12);">${spot.name}</div>`
+        });
+        routeMap.add(marker);
+        routeOverlays.push(marker);
+      });
+      fitActiveRoute();
+    }
+
+    function fitActiveRoute() {
+      if (!routeMap || !routeOverlays.length) return;
+      routeMap.setFitView(routeOverlays, false, [70, 310, 60, 50], 16);
+    }
+
+    function formatKm(meters) {
+      return `${((meters || 0) / 1000).toFixed(1)} km`;
+    }
+
     document.querySelectorAll(".pref-chip").forEach((chip) => {
       chip.addEventListener("click", () => chip.classList.toggle("active"));
     });
 
     dayTabs.forEach((tab, index) => {
-      tab.addEventListener("click", () => {
-        dayTabs.forEach((item) => item.classList.remove("active"));
-        miniDays.forEach((item) => item.classList.remove("active"));
-        tab.classList.add("active");
-        miniDays[index]?.classList.add("active");
-      });
+      tab.addEventListener("click", () => renderRouteDay(index));
     });
 
+    fitRouteButton.addEventListener("click", fitActiveRoute);
     startButton.addEventListener("click", startDemo);
     resetButton.addEventListener("click", resetDemo);
+    bootAmapRoutePreview();
   </script>
 </body>
 </html>
