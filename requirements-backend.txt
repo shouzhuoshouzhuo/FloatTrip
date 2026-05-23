@@ -3,3 +3,9 @@ uvicorn
 pydantic
 requests
 python-dotenv
+tavily-python
+httpx
+beautifulsoup4
+markdownify
+langgraph
+langchain-openai

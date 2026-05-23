@@ -5,24 +5,14 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 from backend.app.schemas.trip_request import TripGenerateRouteRequest
-from backend.app.services.travel_research import ResearchBundle, ResearchDocument, SearchResult
+from backend.app.services.travel_research import (
+    AttractionCandidate,
+    CandidatePool,
+    ResearchBundle,
+    ResearchDocument,
+    SearchResult,
+)
 from backend.app.workflows.research_route_planner import merge_preferred_spots
-
-
-def candidate(name: str, lng: float, lat: float, mention_count: int = 3, score: int = 5) -> dict:
-    return {
-        "name": name,
-        "mention_count": mention_count,
-        "score": score,
-        "poi": {
-            "provider": "amap",
-            "id": f"poi-{name}",
-            "name": name,
-            "type": "风景名胜",
-            "address": f"{name}地址",
-            "location": {"lng": lng, "lat": lat},
-        },
-    }
 
 
 class PlannerApiTests(unittest.TestCase):
@@ -34,117 +24,6 @@ class PlannerApiTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         self.assertEqual({"status": "ok"}, response.json())
-
-    def test_cluster_routes_returns_map_ready_days(self) -> None:
-        payload = {
-            "destination": "常州",
-            "days": 2,
-            "candidates": [
-                candidate("老城甲", 119.970, 31.780, score=10),
-                candidate("老城乙", 119.974, 31.782, score=8),
-                candidate("湖区甲", 120.020, 31.720, score=9),
-                candidate("湖区乙", 120.024, 31.724, score=7),
-            ],
-        }
-
-        response = self.client.post("/api/planner/cluster-routes", json=payload)
-
-        self.assertEqual(200, response.status_code)
-        data = response.json()
-        self.assertEqual("常州", data["destination"])
-        self.assertEqual(2, len(data["days"]))
-        self.assertEqual("route_pending", data["days"][0]["summary_metrics"]["route_status"])
-        self.assertEqual([], data["days"][0]["route_segments"])
-        self.assertEqual(
-            [
-                "day_index",
-                "cluster_id",
-                "spots",
-                "route_order",
-                "route_segments",
-                "summary_metrics",
-                "duration_matrix_seconds",
-                "optimized_order",
-            ],
-            list(data["days"][0].keys()),
-        )
-
-    def test_transit_routes_returns_frontend_ready_nanjing_three_day_json(self) -> None:
-        payload = {
-            "destination": "南京",
-            "days": 3,
-            "candidates": [
-                candidate("中山陵", 118.8482, 32.0640, score=10),
-                candidate("明孝陵", 118.8355, 32.0572, score=9),
-                candidate("夫子庙", 118.7881, 32.0206, score=10),
-                candidate("老门东", 118.7927, 32.0142, score=8),
-                candidate("南京博物院", 118.8172, 32.0411, score=9),
-                candidate("总统府", 118.7976, 32.0443, score=8),
-            ],
-        }
-
-        with patch(
-            "backend.app.workflows.trip_planner_graph.require_amap_key",
-            return_value="test-key",
-        ), patch(
-            "backend.app.planning.transit_routes.time.sleep",
-            return_value=None,
-        ), patch(
-            "backend.app.planning.transit_routes.amap.query_transit_route",
-            side_effect=fake_transit_route,
-        ):
-            response = self.client.post("/api/planner/transit-routes", json=payload)
-
-        self.assertEqual(200, response.status_code)
-        data = response.json()
-        self.assertEqual("floattrip_daily_transit_routes.v1", data["schema_version"])
-        self.assertEqual("南京", data["destination"])
-        self.assertEqual(3, data["days_count"])
-        self.assertEqual("amap_transit", data["route_mode"])
-        self.assertEqual(3, len(data["days"]))
-        for day in data["days"]:
-            self.assertEqual("route_planned", day["summary_metrics"]["route_status"])
-            self.assertGreaterEqual(len(day["spots"]), 2)
-            self.assertEqual(len(day["spots"]) - 1, len(day["route_segments"]))
-            self.assertEqual(len(day["spots"]), len(day["optimized_order"]))
-            self.assertTrue(day["route_segments"][0]["path"])
-            self.assertIn("lng", day["route_segments"][0]["path"][0])
-            self.assertIn("lat", day["route_segments"][0]["path"][0])
-
-    def test_cluster_routes_returns_clear_error_for_missing_location(self) -> None:
-        payload = {
-            "destination": "常州",
-            "days": 1,
-            "candidates": [
-                {
-                    "name": "坏点",
-                    "mention_count": 2,
-                    "poi": {
-                        "provider": "amap",
-                        "location": {"lng": 119.970},
-                    },
-                }
-            ],
-        }
-
-        response = self.client.post("/api/planner/cluster-routes", json=payload)
-
-        self.assertEqual(422, response.status_code)
-
-    def test_cluster_routes_returns_400_for_insufficient_candidates(self) -> None:
-        payload = {
-            "destination": "常州",
-            "days": 2,
-            "candidates": [
-                candidate("甲", 119.970, 31.780),
-                candidate("乙", 119.974, 31.782),
-            ],
-        }
-
-        response = self.client.post("/api/planner/cluster-routes", json=payload)
-
-        self.assertEqual(400, response.status_code)
-        self.assertIn("need at least 4 candidates", response.json()["detail"])
 
     def test_generate_routes_runs_research_poi_and_transit_pipeline(self) -> None:
         payload = {
@@ -170,7 +49,11 @@ class PlannerApiTests(unittest.TestCase):
                     title="南京两日游攻略",
                     url="https://example.com/nanjing",
                     source="test",
-                    text="中山陵 明孝陵 夫子庙 老门东 南京博物院 总统府 中山陵 夫子庙",
+                    text=(
+                        "## 南京两日游攻略\n\n"
+                        "中山陵 明孝陵 夫子庙 老门东 南京博物院 总统府 "
+                        "中山陵 夫子庙 明孝陵 老门东 南京博物院 总统府"
+                    ),
                 )
             ],
             warnings=[],
@@ -180,6 +63,9 @@ class PlannerApiTests(unittest.TestCase):
             "backend.app.workflows.research_route_planner.collect_research",
             return_value=bundle,
         ) as collect_research, patch(
+            "backend.app.services.travel_research.build_structured_deepseek",
+            return_value=FakeStructuredLlm(),
+        ), patch(
             "backend.app.workflows.research_route_planner.require_amap_key",
             return_value="test-key",
         ), patch(
@@ -204,7 +90,49 @@ class PlannerApiTests(unittest.TestCase):
         self.assertGreaterEqual(data["candidate_count"], 4)
         self.assertEqual(1, data["research_summary"]["search_result_count"])
         self.assertEqual(1, data["research_summary"]["accepted_document_count"])
+        self.assertEqual("deepseek_markdown", data["research_summary"]["candidate_builder"])
+        self.assertEqual("deepseek-v4-flash", data["research_summary"]["model"])
         self.assertTrue(data["days"][0]["route_segments"])
+
+    def test_generate_routes_returns_503_when_deepseek_candidate_pool_fails(self) -> None:
+        payload = {
+            "destination": "南京",
+            "days": 2,
+            "max_search_results": 2,
+            "max_candidates": 8,
+        }
+        bundle = ResearchBundle(
+            query_plan=["南京 两日游 攻略 景点"],
+            search_results=[
+                SearchResult(
+                    title="南京两日游攻略",
+                    url="https://example.com/nanjing",
+                    snippet="中山陵 明孝陵",
+                    source="test",
+                )
+            ],
+            documents=[
+                ResearchDocument(
+                    title="南京两日游攻略",
+                    url="https://example.com/nanjing",
+                    source="test",
+                    text="## 南京两日游攻略\n\n中山陵 明孝陵 夫子庙 老门东",
+                )
+            ],
+            warnings=[],
+        )
+
+        with patch(
+            "backend.app.workflows.research_route_planner.collect_research",
+            return_value=bundle,
+        ), patch(
+            "backend.app.services.travel_research.build_structured_deepseek",
+            side_effect=RuntimeError("缺少 DEEPSEEK_API_KEY"),
+        ):
+            response = self.client.post("/api/planner/generate", json=payload)
+
+        self.assertEqual(503, response.status_code)
+        self.assertIn("缺少 DEEPSEEK_API_KEY", response.json()["detail"])
 
     def test_generate_request_splits_user_spot_text(self) -> None:
         request = TripGenerateRouteRequest(
@@ -236,6 +164,20 @@ class PlannerApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeStructuredLlm:
+    def invoke(self, _messages: list[tuple[str, str]]) -> CandidatePool:
+        return CandidatePool(
+            candidate_pool=[
+                AttractionCandidate(name="中山陵", preference_score=10),
+                AttractionCandidate(name="明孝陵", preference_score=8),
+                AttractionCandidate(name="夫子庙", preference_score=7),
+                AttractionCandidate(name="老门东", preference_score=6),
+                AttractionCandidate(name="南京博物院", preference_score=9),
+                AttractionCandidate(name="总统府", preference_score=5),
+            ]
+        )
 
 
 def fake_transit_route(

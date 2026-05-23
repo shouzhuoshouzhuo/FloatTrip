@@ -1,4 +1,4 @@
-"""Full trip planning workflow from web research to routed itinerary."""
+"""从网页调研到前端路线结果的完整旅行规划工作流。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,13 @@ from backend.app.services.travel_research import collect_research, extract_candi
 
 
 def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePlanResponse:
-    """Generate a map-ready route plan starting with web research."""
+    """功能：串联网页调研、候选池、POI 补坐标和真实路线规划。
+
+    参数：
+        request：前端提交的完整规划请求。
+    返回值：
+        返回前端可直接渲染的每日路线规划响应。
+    """
     destination = request.destination.strip()
     preferences = [preference.strip() for preference in request.preferences if preference.strip()]
     research_bundle = collect_research(
@@ -60,12 +66,27 @@ def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePl
         min_cluster_size=request.min_cluster_size,
     )
     route_plan.candidate_count = len(enriched_candidates)
+    candidate_builder = next(
+        (
+            str(candidate.get("candidate_builder"))
+            for candidate in raw_candidates
+            if candidate.get("candidate_builder")
+        ),
+        "unknown",
+    )
+    candidate_model = next(
+        (str(candidate.get("model")) for candidate in raw_candidates if candidate.get("model")),
+        None,
+    )
     route_plan.research_summary = {
         "query_plan": research_bundle.query_plan,
         "search_result_count": len(research_bundle.search_results),
         "accepted_document_count": len(research_bundle.documents),
+        "markdown_document_count": len(research_bundle.documents),
         "raw_candidate_count": len(raw_candidates),
         "enriched_candidate_count": len(enriched_candidates),
+        "candidate_builder": candidate_builder,
+        "model": candidate_model,
         "sources": [
             {
                 "title": document.title,
@@ -87,7 +108,14 @@ def merge_preferred_spots(
     candidates: list[dict[str, Any]],
     preferred_spots: list[str],
 ) -> list[dict[str, Any]]:
-    """Merge user-requested spots into the ranked candidate pool."""
+    """功能：把用户指定必去景点合并进候选池并提高排序优先级。
+
+    参数：
+        candidates：网页调研抽取出的候选景点列表。
+        preferred_spots：用户输入的必去景点名称列表。
+    返回值：
+        返回合并、去重并按分数排序后的候选景点列表。
+    """
     by_name = {str(candidate.get("name", "")).strip(): dict(candidate) for candidate in candidates}
     for spot in preferred_spots:
         name = spot.strip()
@@ -107,4 +135,3 @@ def merge_preferred_spots(
             str(candidate.get("name", "")),
         ),
     )
-

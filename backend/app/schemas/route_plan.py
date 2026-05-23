@@ -47,7 +47,7 @@ class DaySummaryMetrics(BaseModel):
 
     spot_count: int
     cluster_radius_km: float
-    route_status: Literal["route_pending", "route_planned", "route_partial"] = "route_pending"
+    route_status: Literal["route_planned", "route_partial"] = "route_planned"
     total_duration_seconds: int | None = None
     total_duration_minutes: float | None = None
     failed_segment_count: int = 0
@@ -69,10 +69,10 @@ class DayRoutePlan(BaseModel):
 class TripRoutePlanResponse(BaseModel):
     """一次旅行的按天路线计划响应。"""
 
-    schema_version: str = "floattrip_route_plan.v1"
+    schema_version: str = "floattrip_daily_transit_routes.v1"
     destination: str
     days_count: int | None = None
-    route_mode: Literal["cluster_preview", "amap_transit"] = "cluster_preview"
+    route_mode: Literal["amap_transit"] = "amap_transit"
     strategy: int | None = None
     days: list[DayRoutePlan]
     warnings: list[str] = Field(default_factory=list)

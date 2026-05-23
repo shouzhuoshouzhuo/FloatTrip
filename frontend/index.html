@@ -1408,15 +1408,13 @@
       try {
         await loadScript("amap-config.local.js");
       } catch (error) {
-        setMapStatus("等待后端 JSON", "未找到 amap-config.local.js，仍可查看后端返回的路线顺序与 JSON 指标。");
-        await startDemo();
+        setMapStatus("等待完整规划", "未找到 amap-config.local.js；点击“启动完整规划”后仍可查看后端返回的路线顺序与 JSON 指标。");
         return;
       }
 
       const config = window.FLOATTRIP_AMAP_CONFIG || {};
       if (!config.key) {
-        setMapStatus("等待后端 JSON", "缺少高德 JS Key，仍可查看后端返回的路线顺序与 JSON 指标。");
-        await startDemo();
+        setMapStatus("等待完整规划", "缺少高德 JS Key；点击“启动完整规划”后仍可查看后端返回的路线顺序与 JSON 指标。");
         return;
       }
       window._AMapSecurityConfig = { securityJsCode: config.securityJsCode || "" };
@@ -1424,8 +1422,7 @@
       try {
         await loadScript(`https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(config.key)}`);
       } catch (error) {
-        setMapStatus("高德地图加载失败", "请检查网络、高德 JS Key 和安全密钥配置；后端 JSON 仍会继续渲染。");
-        await startDemo();
+        setMapStatus("高德地图加载失败", "请检查网络、高德 JS Key 和安全密钥配置；点击“启动完整规划”后，后端 JSON 仍会继续渲染。");
         return;
       }
 
@@ -1436,8 +1433,7 @@
         mapStyle: "amap://styles/fresh",
         resizeEnable: true
       });
-      setMapStatus("地图已就绪", "请求后端后，线路会沿高德返回的公交与步行 polyline 绘制。");
-      await startDemo();
+      setMapStatus("地图已就绪", "点击“启动完整规划”后，线路会沿高德返回的公交与步行 polyline 绘制。");
     }
 
     function currentRoutePlan() {
@@ -1589,6 +1585,7 @@
     fitRouteButton.addEventListener("click", fitActiveRoute);
     startButton.addEventListener("click", startDemo);
     resetButton.addEventListener("click", resetDemo);
+    resetDemo();
     bootAmapRoutePreview();
   </script>
 </body>
