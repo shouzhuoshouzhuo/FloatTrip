@@ -702,7 +702,7 @@
     }
 
     .stream-fill {
-      width: var(--progress, 58%);
+      width: var(--progress, 66%);
       height: 100%;
       border-radius: inherit;
       background:
@@ -717,7 +717,7 @@
       position: relative;
       z-index: 1;
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 8px;
     }
 
@@ -727,14 +727,15 @@
       gap: 10px;
       text-align: center;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 850;
+      min-width: 0;
     }
 
     .step span {
-      min-width: 62px;
+      min-width: 0;
       line-height: 1.45;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .drop {
@@ -1008,8 +1009,8 @@
         <p>告诉 Agent 你的旅行需求，系统会把候选景点、每日聚类和路线顺序逐步浮出为可编辑计划。</p>
       </div>
       <aside class="status-badge">
-        <strong id="completionNumber">62%</strong>
-        <span id="completionText">路线规划进行中</span>
+        <strong id="completionNumber">66%</strong>
+        <span id="completionText">分天规划进行中</span>
       </aside>
     </header>
 
@@ -1111,14 +1112,15 @@
               <h3 id="agentTitle">Agent 水流进度</h3>
             </div>
 
-            <div class="flow-track" style="--progress: 58%;">
+            <div class="flow-track" style="--progress: 66%;">
               <div class="stream" aria-hidden="true"><div class="stream-fill" id="streamFill"></div></div>
               <div class="steps">
                 <div class="step done" data-step="0"><i class="drop"></i><span>需求理解<br />已完成</span></div>
-                <div class="step done" data-step="1"><i class="drop"></i><span>信息收集<br />已完成</span></div>
-                <div class="step active" data-step="2"><i class="drop"></i><span>行程规划<br />进行中</span></div>
-                <div class="step" data-step="3"><i class="drop"></i><span>路线优化<br />等待中</span></div>
-                <div class="step" data-step="4"><i class="drop"></i><span>生成结果<br />等待中</span></div>
+                <div class="step done" data-step="1"><i class="drop"></i><span>网页搜索<br />已完成</span></div>
+                <div class="step done" data-step="2"><i class="drop"></i><span>候选 POI<br />已完成</span></div>
+                <div class="step active" data-step="3"><i class="drop"></i><span>分天规划<br />进行中</span></div>
+                <div class="step" data-step="4"><i class="drop"></i><span>路线优化<br />等待中</span></div>
+                <div class="step" data-step="5"><i class="drop"></i><span>结果生成<br />等待中</span></div>
               </div>
             </div>
           </article>
@@ -1188,11 +1190,48 @@
     let activeRouteIndex = 0;
 
     const stageCopy = [
-      ["18%", "需求理解已完成"],
-      ["38%", "信息收集已完成"],
-      ["58%", "行程规划进行中"],
-      ["78%", "路线优化等待中"],
-      ["100%", "生成结果已完成"]
+      {
+        progress: "12%",
+        title: "需求理解",
+        activeStatus: "解析中",
+        doneStatus: "已完成",
+        label: "需求理解中"
+      },
+      {
+        progress: "28%",
+        title: "网页搜索",
+        activeStatus: "搜索中",
+        doneStatus: "已完成",
+        label: "正在搜索攻略网页"
+      },
+      {
+        progress: "48%",
+        title: "候选 POI",
+        activeStatus: "校验中",
+        doneStatus: "已完成",
+        label: "正在抽取候选景点并校验 POI"
+      },
+      {
+        progress: "66%",
+        title: "分天规划",
+        activeStatus: "规划中",
+        doneStatus: "已完成",
+        label: "分天规划进行中"
+      },
+      {
+        progress: "84%",
+        title: "路线优化",
+        activeStatus: "优化中",
+        doneStatus: "已完成",
+        label: "正在计算高德通行时间与最短访问顺序"
+      },
+      {
+        progress: "100%",
+        title: "结果生成",
+        activeStatus: "生成中",
+        doneStatus: "已完成",
+        label: "生成结果已完成"
+      }
     ];
 
     function showToast(message) {
@@ -1207,31 +1246,36 @@
     }
 
     function setStage(index) {
-      const [progress, label] = stageCopy[index];
-      flowTrack.style.setProperty("--progress", progress);
-      streamFill.style.width = progress;
-      completionNumber.textContent = progress;
-      completionText.textContent = label;
+      const safeIndex = Math.min(Math.max(index, 0), stageCopy.length - 1);
+      const stage = stageCopy[safeIndex];
+      flowTrack.style.setProperty("--progress", stage.progress);
+      streamFill.style.width = stage.progress;
+      completionNumber.textContent = stage.progress;
+      completionText.textContent = stage.label;
 
       steps.forEach((step, stepIndex) => {
-        step.classList.toggle("done", stepIndex < index);
-        step.classList.toggle("active", stepIndex === index);
+        const stepMeta = stageCopy[stepIndex];
+        const isDone = stepIndex < safeIndex || safeIndex === stageCopy.length - 1;
+        const isActive = stepIndex === safeIndex && safeIndex !== stageCopy.length - 1;
+        const status = isDone ? stepMeta.doneStatus : isActive ? stepMeta.activeStatus : "等待中";
+
+        step.classList.toggle("done", isDone);
+        step.classList.toggle("active", isActive);
+        step.querySelector("span").innerHTML = `${stepMeta.title}<br />${status}`;
       });
 
       miniDays.forEach((card, cardIndex) => {
-        card.classList.toggle("active", cardIndex === Math.min(index, 3));
+        card.classList.toggle("active", cardIndex === Math.min(safeIndex, 3));
       });
 
-      if (index === 4) {
+      if (safeIndex === stageCopy.length - 1) {
         showToast("规划结果已生成，可以继续编辑每日路线");
       }
     }
 
     function resetDemo() {
       clearTimers();
-      setStage(2);
-      completionNumber.textContent = "62%";
-      completionText.textContent = "路线规划进行中";
+      setStage(3);
     }
 
     function startDemo() {

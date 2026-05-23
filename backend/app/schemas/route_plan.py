@@ -1,4 +1,4 @@
-"""面向地图预览的路线计划响应数据结构。"""
+"""面向地图预览和行程详情页的路线计划响应数据结构。"""
 
 from __future__ import annotations
 
@@ -24,13 +24,21 @@ class SpotMapItem(BaseModel):
 
 
 class RouteSegment(BaseModel):
-    """两个景点之间的路线段；本轮重构先保留空结构，后续接高德路线。"""
+    """两个景点之间的真实路线段。"""
 
     from_spot_id: str | None = None
+    from_name: str | None = None
     to_spot_id: str | None = None
-    mode: str | None = None
+    to_name: str | None = None
+    mode: Literal["transit", "walking", "unknown"] | None = None
     distance_meters: int | None = None
     duration_seconds: int | None = None
+    duration_minutes: float | None = None
+    walking_distance_meters: int | None = None
+    cost: str | None = None
+    summary: str | None = None
+    amap_transit: dict[str, Any] | None = None
+    fallback_mode: str | None = None
     path: list[Location] = Field(default_factory=list)
 
 
@@ -39,7 +47,10 @@ class DaySummaryMetrics(BaseModel):
 
     spot_count: int
     cluster_radius_km: float
-    route_status: Literal["route_pending"] = "route_pending"
+    route_status: Literal["route_pending", "route_planned", "route_partial"] = "route_pending"
+    total_duration_seconds: int | None = None
+    total_duration_minutes: float | None = None
+    failed_segment_count: int = 0
 
 
 class DayRoutePlan(BaseModel):
@@ -51,11 +62,19 @@ class DayRoutePlan(BaseModel):
     route_order: list[str]
     route_segments: list[RouteSegment] = Field(default_factory=list)
     summary_metrics: DaySummaryMetrics
+    duration_matrix_seconds: list[list[int | None]] | None = None
+    optimized_order: list[str] = Field(default_factory=list)
 
 
 class TripRoutePlanResponse(BaseModel):
     """一次旅行的按天路线计划响应。"""
 
+    schema_version: str = "floattrip_route_plan.v1"
     destination: str
+    days_count: int | None = None
+    route_mode: Literal["cluster_preview", "amap_transit"] = "cluster_preview"
+    strategy: int | None = None
     days: list[DayRoutePlan]
     warnings: list[str] = Field(default_factory=list)
+    research_summary: dict[str, Any] | None = None
+    candidate_count: int | None = None

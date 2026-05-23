@@ -1,0 +1,4 @@
+node_modules/
+dist/
+amap-config.local.js
+.env.local
