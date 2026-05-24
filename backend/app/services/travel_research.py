@@ -1,4 +1,4 @@
-"""网页搜索、markdown 提纯和 DeepSeek 候选景点池服务。"""
+"""网页搜索、markdown 提纯和 DeepSeek 热门候选景点池 Agent 服务。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) FloatTripBackend/0.1"
 )
 LOCAL_ENV_FILE = Path(__file__).resolve().parents[3] / ".env.local"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/beta"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_MAX_SEARCH_RESULTS = 8
 DEFAULT_MAX_CANDIDATES = 28
@@ -26,7 +26,7 @@ TAVILY_MAX_RESULTS = 20
 MIN_MARKDOWN_CHARS = 200
 DEFAULT_SEARCH_TIMEOUT = 20.0
 DEFAULT_FETCH_TIMEOUT = 10.0
-PRIORITY_SEARCH_DOMAINS = ("bendibao.com",)
+PRIORITY_SEARCH_DOMAINS = ("bendibao.com", "you.ctrip.com")
 HTTP_PROXY_ENV_KEYS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
 
 REMOVED_TAGS = {
@@ -122,6 +122,22 @@ class ResearchBundle:
     warnings: list[str]
 
 
+@dataclass(frozen=True)
+class CandidatePoolGenerationResult:
+    """候选景点池 Agent 的完整输出。"""
+
+    research_bundle: ResearchBundle
+    candidates: list[dict[str, object]]
+
+
+class SearchQueryPlan(BaseModel):
+    """DeepSeek 为候选景点池调研生成的多搜索词计划。"""
+
+    queries: list[str] = Field(
+        description="用于搜索目的地热门景点、必去景点、攻略路线和偏好玩法的多条中文搜索词"
+    )
+
+
 class AttractionCandidate(BaseModel):
     """DeepSeek 从 markdown 中识别出的候选景点。"""
 
@@ -134,9 +150,9 @@ class AttractionCandidate(BaseModel):
 
 
 class RankedAttractionCandidate(AttractionCandidate):
-    """补充代码统计提及频率后的候选景点。"""
+    """补充代码统计名称总出现次数后的候选景点。"""
 
-    mention_count: int = Field(ge=1, description="景点名称在 markdown 攻略中的出现次数")
+    mention_count: int = Field(ge=1, description="景点名称在 markdown 攻略中的总出现次数")
 
 
 class CandidatePool(BaseModel):
@@ -152,9 +168,14 @@ class RankedCandidatePool(BaseModel):
 
 
 class CandidatePoolState(TypedDict, total=False):
-    """LangGraph 候选池抽取状态。"""
+    """LangGraph 热门候选景点池 Agent 状态。"""
 
+    destination: str
+    days: int
+    query_plan: list[str]
+    research_bundle: ResearchBundle
     markdown_guides: str
+    markdown_documents: list[str]
     preferences: list[str]
     max_candidates: int
     candidate_pool: CandidatePool
@@ -187,6 +208,38 @@ def collect_research(
         raise ValueError(f"max_results must be between 1 and {TAVILY_MAX_RESULTS}.")
 
     query_plan = build_queries(destination, days, preferences)
+    return collect_research_for_queries(
+        query_plan,
+        per_query_limit=per_query_limit,
+        max_results=max_results,
+        max_page_chars=max_page_chars,
+    )
+
+
+def collect_research_for_queries(
+    query_plan: list[str],
+    *,
+    per_query_limit: int = 3,
+    max_results: int = DEFAULT_MAX_SEARCH_RESULTS,
+    max_page_chars: int = 12_000,
+) -> ResearchBundle:
+    """功能：按给定多 query 调用 Tavily 搜索攻略网页，并提纯为 markdown。
+
+    参数：
+        query_plan：候选景点池 Agent 生成并归一化后的搜索词列表。
+        per_query_limit：每个搜索词最多接受的页面数量。
+        max_results：整体最多接受的搜索结果数量。
+        max_page_chars：每篇 markdown 最多保留字符数。
+    返回值：
+        返回搜索词、搜索结果、markdown 攻略文档和抓取警告。
+    """
+    load_local_env()
+    if not 1 <= max_results <= TAVILY_MAX_RESULTS:
+        raise ValueError(f"max_results must be between 1 and {TAVILY_MAX_RESULTS}.")
+
+    if not query_plan:
+        raise RuntimeError("候选景点池 Agent 没有生成可用搜索词")
+
     warnings: list[str] = []
     search_results: list[SearchResult] = []
     seen_urls: set[str] = set()
@@ -510,12 +563,12 @@ def extract_candidate_pool(
         max_candidates：最多返回的候选景点数量。
         model：DeepSeek 模型名；不传则读取 DEEPSEEK_MODEL。
     返回值：
-        返回按提及频率和偏好符合分排序的候选景点字典列表。
+        返回按景点名称总出现次数和偏好符合分排序的候选景点字典列表。
     """
-    del destination
     markdown_guides = build_markdown_guides(bundle.documents, DEFAULT_MAX_MARKDOWN_CHARS)
     if not markdown_guides:
         raise RuntimeError("没有可供 DeepSeek 抽取候选景点的 markdown 攻略")
+    markdown_documents = [document.text for document in bundle.documents if document.text.strip()]
 
     selected_model = normalize_deepseek_model(
         model or os.getenv("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
@@ -525,6 +578,8 @@ def extract_candidate_pool(
         result = graph.invoke(
             {
                 "markdown_guides": markdown_guides,
+                "markdown_documents": markdown_documents,
+                "destination": destination,
                 "preferences": preferences,
                 "max_candidates": max_candidates,
             }
@@ -536,6 +591,71 @@ def extract_candidate_pool(
     if not isinstance(ranked_pool, RankedCandidatePool):
         raise RuntimeError("DeepSeek markdown 候选池生成失败：结构化结果为空")
     return build_candidate_dicts(ranked_pool, bundle.documents, selected_model)
+
+
+def generate_hot_candidate_pool(
+    destination: str,
+    days: int,
+    preferences: list[str],
+    *,
+    per_query_limit: int = 3,
+    max_search_results: int = DEFAULT_MAX_SEARCH_RESULTS,
+    max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    max_page_chars: int = 12_000,
+    model: str | None = None,
+) -> CandidatePoolGenerationResult:
+    """功能：运行热门候选景点池 Agent，生成搜索计划、调研网页并抽取候选景点。
+
+    参数：
+        destination：目的地名称。
+        days：旅行天数，只作为需求背景，不限制搜索词必须围绕天数。
+        preferences：用户偏好，用于生成搜索词和候选景点偏好打分。
+        per_query_limit：每个搜索词最多接受的页面数量。
+        max_search_results：整体最多接受的搜索结果数量。
+        max_candidates：最多返回的候选景点数量。
+        max_page_chars：每篇 markdown 最多保留字符数。
+        model：DeepSeek 模型名；不传则读取 DEEPSEEK_MODEL。
+    返回值：
+        返回网页调研结果和带提及频率、偏好分的热门候选景点池。
+    """
+    load_local_env()
+    selected_model = normalize_deepseek_model(
+        model or os.getenv("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
+    )
+    graph = build_candidate_pool_agent_graph(
+        build_structured_query_planner(selected_model),
+        build_structured_deepseek(selected_model),
+        per_query_limit=per_query_limit,
+        max_search_results=max_search_results,
+        max_page_chars=max_page_chars,
+    )
+    try:
+        result = graph.invoke(
+            {
+                "destination": destination,
+                "days": days,
+                "preferences": preferences,
+                "max_candidates": max_candidates,
+            }
+        )
+    except Exception as exc:
+        raise RuntimeError(f"热门候选景点池 Agent 生成失败：{exc}") from exc
+
+    ranked_pool = result.get("ranked_candidate_pool")
+    research_bundle = result.get("research_bundle")
+    if not isinstance(ranked_pool, RankedCandidatePool) or not isinstance(
+        research_bundle, ResearchBundle
+    ):
+        raise RuntimeError("热门候选景点池 Agent 生成失败：结构化结果为空")
+    return CandidatePoolGenerationResult(
+        research_bundle=research_bundle,
+        candidates=build_candidate_dicts(
+            ranked_pool,
+            research_bundle.documents,
+            selected_model,
+            candidate_builder="deepseek_candidate_pool_agent",
+        ),
+    )
 
 
 def build_markdown_guides(documents: list[ResearchDocument], max_chars: int) -> str:
@@ -551,28 +671,39 @@ def build_markdown_guides(documents: list[ResearchDocument], max_chars: int) -> 
     return markdown[:max_chars].strip()
 
 
-def build_prompt(markdown_guides: str, preferences: list[str], max_candidates: int) -> str:
+def build_prompt(
+    markdown_guides: str,
+    preferences: list[str],
+    max_candidates: int,
+    destination: str,
+) -> str:
     """功能：构造 DeepSeek 候选池抽取提示词。
 
     参数：
         markdown_guides：清噪后的 markdown 攻略。
         preferences：用户偏好。
         max_candidates：最多输出景点数量。
+        destination：用户指定的目的地城市或行政区。
     返回值：
         返回完整提示词。
     """
     preference_text = "、".join(preferences) if preferences else "无明确偏好"
+    destination_text = destination.strip() or "用户指定目的地"
     return f"""
 请从 FloatTrip 的 markdown 旅行攻略中抽取候选景点池。
 
+用户指定目的地：{destination_text}
 用户偏好：{preference_text}
 最多输出：{max_candidates} 个景点
 
 抽取要求：
+- 只能输出位于“{destination_text}”行政区范围内的景点；不要输出从“{destination_text}”出发前往外地、周边城市、跨城线路中的景点。
+- 如果攻略标题或正文出现“{destination_text}周边”“{destination_text}到外地”“{destination_text}-其他城市”“从{destination_text}出发”等跨城语境，只抽取仍在“{destination_text}”本地的景点，忽略其他城市景点。
+- 遇到名称带有其他城市前缀或明显属于其他城市的景点，必须排除，即使文本中出现过。
 - 只输出真实可游玩的景点、景区、博物馆、公园、历史街区、古镇、寺庙、主题乐园、自然风景区。
 - 不输出酒店、餐厅、美食菜名、商场、交通站点、行政区地址、攻略标题词、路线词、开放时间、预约和门票信息。
 - 同一景点的简称、别名和全称只保留一个名称。
-- name 必须选择 markdown 攻略中出现过的那个景点名称，后续程序会按 name 原文统计出现频率。
+- name 必须选择 markdown 攻略中出现过的那个景点名称，后续程序会按 name 原文统计总出现次数。
 - 不要统计景点出现次数，程序会在结构化抽取后统计。
 - preference_score 只衡量景点和用户偏好的符合程度，使用 0 到 10 的整数。
 - 文本没有足够证据时不要猜测景点；没有可靠候选时返回空数组。
@@ -616,6 +747,162 @@ def build_structured_deepseek(model: str) -> Any:
     return llm.with_structured_output(CandidatePool, method="function_calling", strict=True)
 
 
+def build_structured_query_planner(model: str) -> Any:
+    """功能：创建支持结构化输出的 DeepSeek 搜索词规划模型。
+
+    参数：
+        model：DeepSeek 模型名。
+    返回值：
+        返回绑定 SearchQueryPlan schema 的 LangChain 模型。
+    """
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("缺少 DEEPSEEK_API_KEY。请在环境变量或 .env.local 中配置后重试。")
+
+    try:
+        import httpx
+        from langchain_openai import ChatOpenAI
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("缺少 httpx 或 langchain-openai。请先安装后端依赖。") from exc
+
+    proxy = choose_http_proxy()
+    http_client = httpx.Client(proxy=proxy, trust_env=False)
+    http_async_client = httpx.AsyncClient(proxy=proxy, trust_env=False)
+    llm = ChatOpenAI(
+        model=normalize_deepseek_model(model),
+        api_key=api_key,
+        base_url=DEEPSEEK_BASE_URL,
+        temperature=0,
+        http_client=http_client,
+        http_async_client=http_async_client,
+        http_socket_options=(),
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+    return llm.with_structured_output(SearchQueryPlan, method="function_calling", strict=True)
+
+
+def build_query_plan_prompt(destination: str, days: int, preferences: list[str]) -> str:
+    """功能：构造热门候选景点池 Agent 的搜索词规划提示词。
+
+    参数：
+        destination：目的地名称。
+        days：旅行天数。
+        preferences：用户偏好。
+    返回值：
+        返回完整提示词。
+    """
+    preference_text = "、".join(preferences) if preferences else "无明确偏好"
+    day_text = chinese_days(days)
+    return f"""
+请为 FloatTrip 的“热门候选景点池”生成多条网页搜索 query。
+
+用户目的地：{destination}
+用户旅行天数：{days} 天（约等于 {day_text}，只能作为背景，不要让所有 query 都局限于几日游）
+用户偏好：{preference_text}
+
+搜索目标：
+- 找到目的地本地范围内高频出现、游客常去、攻略稳定推荐的热门景点。
+- 同时覆盖宽泛热门景点、必去榜单、景点推荐、经典路线、用户偏好玩法。
+- 可以包含“{destination} 热门旅游景点”“{destination} 必去景点”“{destination} 景点推荐”等放宽搜索。
+- 也可以包含“{destination} {day_text} 攻略”“{destination} 自由行路线”等行程相关搜索。
+
+输出要求：
+- 返回 5 到 8 条中文 query。
+- 每条 query 应能直接用于 Tavily 搜索。
+- 不要输出酒店、美食、交通、门票预约这种非候选景点池主目标的 query。
+""".strip()
+
+
+def plan_search_queries_node(structured_query_llm: Any):
+    """功能：生成候选景点池 Agent 的搜索词规划节点。
+
+    参数：
+        structured_query_llm：绑定 SearchQueryPlan schema 的 LLM。
+    返回值：
+        返回可注册到 LangGraph 的节点函数。
+    """
+
+    def plan_search_queries(state: CandidatePoolState) -> CandidatePoolState:
+        """功能：调用 DeepSeek 生成并归一化多 query 搜索计划。
+
+        参数：
+            state：包含目的地、天数和偏好的 Agent 状态。
+        返回值：
+            返回写入 query_plan 的状态增量。
+        """
+        plan = structured_query_llm.invoke(
+            [
+                (
+                    "system",
+                    "你是 FloatTrip 的旅行调研搜索词规划器。必须按结构化输出 schema 返回结果。",
+                ),
+                (
+                    "human",
+                    build_query_plan_prompt(
+                        state.get("destination", ""),
+                        state.get("days", 1),
+                        state.get("preferences", []),
+                    ),
+                ),
+            ]
+        )
+        raw_queries = []
+        if isinstance(plan, SearchQueryPlan):
+            raw_queries = plan.queries
+        elif isinstance(plan, dict):
+            raw_queries = [str(query) for query in plan.get("queries", [])]
+        return {
+            "query_plan": normalize_query_plan(
+                raw_queries,
+                state.get("destination", ""),
+                state.get("days", 1),
+                state.get("preferences", []),
+            )
+        }
+
+    return plan_search_queries
+
+
+def collect_research_node(
+    per_query_limit: int,
+    max_search_results: int,
+    max_page_chars: int,
+):
+    """功能：生成按 Agent 搜索计划抓取 markdown 攻略的节点。
+
+    参数：
+        per_query_limit：每个搜索词最多接受的页面数量。
+        max_search_results：整体最多接受的搜索结果数量。
+        max_page_chars：每篇 markdown 最多保留字符数。
+    返回值：
+        返回可注册到 LangGraph 的节点函数。
+    """
+
+    def collect_research_from_plan(state: CandidatePoolState) -> CandidatePoolState:
+        """功能：执行 Tavily 多 query 搜索和网页 markdown 提纯。
+
+        参数：
+            state：包含 query_plan 的 Agent 状态。
+        返回值：
+            返回调研结果和供 DeepSeek 抽取的 markdown 上下文。
+        """
+        bundle = collect_research_for_queries(
+            state.get("query_plan", []),
+            per_query_limit=per_query_limit,
+            max_results=max_search_results,
+            max_page_chars=max_page_chars,
+        )
+        return {
+            "research_bundle": bundle,
+            "markdown_guides": build_markdown_guides(bundle.documents, DEFAULT_MAX_MARKDOWN_CHARS),
+            "markdown_documents": [
+                document.text for document in bundle.documents if document.text.strip()
+            ],
+        }
+
+    return collect_research_from_plan
+
+
 def extract_candidates_node(structured_llm: Any):
     """功能：生成 LangGraph 的 DeepSeek 抽取节点。
 
@@ -626,6 +913,13 @@ def extract_candidates_node(structured_llm: Any):
     """
 
     def extract_candidates(state: CandidatePoolState) -> CandidatePoolState:
+        """功能：执行 DeepSeek 结构化候选池抽取。
+
+        参数：
+            state：包含 markdown 攻略、用户偏好和最大候选数量的 LangGraph 状态。
+        返回值：
+            返回写入 candidate_pool 的状态增量。
+        """
         pool = structured_llm.invoke(
             [
                 (
@@ -638,6 +932,7 @@ def extract_candidates_node(structured_llm: Any):
                         state["markdown_guides"],
                         state.get("preferences", []),
                         state.get("max_candidates", DEFAULT_MAX_CANDIDATES),
+                        state.get("destination", ""),
                     ),
                 ),
             ]
@@ -648,17 +943,17 @@ def extract_candidates_node(structured_llm: Any):
 
 
 def sort_candidates_node(state: CandidatePoolState) -> CandidatePoolState:
-    """功能：统计候选景点提及频率并排序。
+    """功能：统计候选景点名称总出现次数并排序。
 
     参数：
-        state：包含 DeepSeek 原始候选池和 markdown 攻略的图状态。
+        state：包含 DeepSeek 原始候选池、markdown 攻略和单篇网页文本的图状态。
     返回值：
         返回包含 ranked_candidate_pool 的状态增量。
     """
     return {
         "ranked_candidate_pool": rank_candidate_pool(
             state["candidate_pool"],
-            state["markdown_guides"],
+            state.get("markdown_documents", [state["markdown_guides"]]),
             state.get("max_candidates", DEFAULT_MAX_CANDIDATES),
         )
     }
@@ -683,16 +978,53 @@ def build_graph(structured_llm: Any) -> Any:
     return graph_builder.compile()
 
 
+def build_candidate_pool_agent_graph(
+    structured_query_llm: Any,
+    structured_candidate_llm: Any,
+    *,
+    per_query_limit: int,
+    max_search_results: int,
+    max_page_chars: int,
+) -> Any:
+    """功能：构建搜索词规划、网页调研、候选抽取和排序的热门候选池 Agent。
+
+    参数：
+        structured_query_llm：绑定 SearchQueryPlan schema 的搜索词规划 LLM。
+        structured_candidate_llm：绑定 CandidatePool schema 的候选抽取 LLM。
+        per_query_limit：每个搜索词最多接受的页面数量。
+        max_search_results：整体最多接受的搜索结果数量。
+        max_page_chars：每篇 markdown 最多保留字符数。
+    返回值：
+        返回已编译的 LangGraph。
+    """
+    from langgraph.graph import END, START, StateGraph
+
+    graph_builder = StateGraph(CandidatePoolState)
+    graph_builder.add_node("plan_search_queries", plan_search_queries_node(structured_query_llm))
+    graph_builder.add_node(
+        "collect_research",
+        collect_research_node(per_query_limit, max_search_results, max_page_chars),
+    )
+    graph_builder.add_node("extract_candidates", extract_candidates_node(structured_candidate_llm))
+    graph_builder.add_node("sort_candidates", sort_candidates_node)
+    graph_builder.add_edge(START, "plan_search_queries")
+    graph_builder.add_edge("plan_search_queries", "collect_research")
+    graph_builder.add_edge("collect_research", "extract_candidates")
+    graph_builder.add_edge("extract_candidates", "sort_candidates")
+    graph_builder.add_edge("sort_candidates", END)
+    return graph_builder.compile()
+
+
 def rank_candidate_pool(
     pool: CandidatePool,
-    markdown_guides: str,
+    markdown_documents: list[str],
     max_candidates: int,
 ) -> RankedCandidatePool:
-    """功能：按 markdown 原文提及频率和偏好符合分排序候选景点。
+    """功能：按景点名称总出现次数和偏好符合分排序候选景点。
 
     参数：
         pool：DeepSeek 输出的候选景点池。
-        markdown_guides：用于统计提及频率的 markdown 原文。
+        markdown_documents：用于统计名称总出现次数的单篇 markdown 原文列表。
         max_candidates：最多保留候选数。
     返回值：
         返回排序后的候选景点池。
@@ -700,7 +1032,7 @@ def rank_candidate_pool(
     counted_by_name: dict[str, RankedAttractionCandidate] = {}
     for candidate in pool.candidate_pool:
         name = candidate.name.strip()
-        mention_count = count_name_mentions(markdown_guides, name)
+        mention_count = count_name_mentions(markdown_documents, name)
         if not name or mention_count < 1:
             continue
         previous = counted_by_name.get(name)
@@ -729,6 +1061,7 @@ def build_candidate_dicts(
     pool: RankedCandidatePool,
     documents: list[ResearchDocument],
     model: str,
+    candidate_builder: str = "deepseek_markdown",
 ) -> list[dict[str, object]]:
     """功能：把排序后的候选景点模型转换成后续 POI 校验使用的字典。
 
@@ -736,6 +1069,7 @@ def build_candidate_dicts(
         pool：排序后的候选景点池。
         documents：markdown 来源文档，用于补充 sources。
         model：实际使用的 DeepSeek 模型名。
+        candidate_builder：候选池构建器标识。
     返回值：
         返回候选景点字典列表。
     """
@@ -747,7 +1081,7 @@ def build_candidate_dicts(
                 "mention_count": candidate.mention_count,
                 "preference_score": candidate.preference_score,
                 "score": candidate.mention_count * 100 + candidate.preference_score,
-                "candidate_builder": "deepseek_markdown",
+                "candidate_builder": candidate_builder,
                 "model": model,
                 "sources": [
                     {"title": document.title, "url": document.url, "source": document.source}
@@ -759,20 +1093,23 @@ def build_candidate_dicts(
     return candidates
 
 
-def count_name_mentions(markdown_guides: str, name: str) -> int:
-    """功能：统计景点名称在 markdown 原文中的字面出现次数。
+def count_name_mentions(markdown_documents: list[str], name: str) -> int:
+    """功能：统计景点名称在所有 markdown 网页中的总出现次数。
 
     参数：
-        markdown_guides：markdown 攻略原文。
+        markdown_documents：单篇 markdown 攻略原文列表。
         name：景点名称。
     返回值：
-        返回出现次数。
+        返回景点名称出现总次数；同一网页重复出现会重复累计。
     """
-    return markdown_guides.count(name.strip()) if name.strip() else 0
+    normalized_name = name.strip()
+    if not normalized_name:
+        return 0
+    return sum(document.count(normalized_name) for document in markdown_documents)
 
 
 def build_queries(destination: str, days: int, preferences: list[str]) -> list[str]:
-    """功能：根据目的地、天数和偏好生成 Tavily 搜索词。
+    """功能：根据目的地、天数和偏好生成 Tavily 搜索词兜底计划。
 
     参数：
         destination：目的地名称。
@@ -792,6 +1129,68 @@ def build_queries(destination: str, days: int, preferences: list[str]) -> list[s
     if pref_text:
         queries.insert(1, f"{destination} {day_text} {pref_text} 攻略")
     return queries
+
+
+def build_popular_fallback_queries(destination: str, days: int, preferences: list[str]) -> list[str]:
+    """功能：生成保证候选池覆盖热门景点的兜底搜索词。
+
+    参数：
+        destination：目的地名称。
+        days：旅行天数。
+        preferences：用户偏好。
+    返回值：
+        返回宽泛热门景点、必去榜单、推荐攻略和行程攻略搜索词。
+    """
+    day_text = chinese_days(days)
+    pref_text = " ".join(preferences)
+    queries = [
+        f"{destination} 热门旅游景点",
+        f"{destination} 必去景点 排行榜",
+        f"{destination} 景点推荐 攻略",
+        f"{destination} {day_text} 攻略 景点",
+        f"{destination} 自由行 经典路线 景点",
+    ]
+    if pref_text:
+        queries.insert(3, f"{destination} {pref_text} 景点推荐")
+    return queries
+
+
+def normalize_query_plan(
+    llm_queries: list[str],
+    destination: str,
+    days: int,
+    preferences: list[str],
+    max_queries: int = 8,
+) -> list[str]:
+    """功能：合并 LLM 搜索词和热门兜底搜索词，并去重限制数量。
+
+    参数：
+        llm_queries：DeepSeek 生成的搜索词。
+        destination：目的地名称。
+        days：旅行天数。
+        preferences：用户偏好。
+        max_queries：最多保留搜索词数量。
+    返回值：
+        返回优先覆盖热门景点的多 query 搜索计划。
+    """
+    merged_queries = [
+        *build_popular_fallback_queries(destination, days, preferences),
+        *llm_queries,
+    ]
+    normalized_queries: list[str] = []
+    seen_queries: set[str] = set()
+    for query in merged_queries:
+        cleaned = re.sub(r"\s+", " ", str(query).strip())
+        if not cleaned:
+            continue
+        dedupe_key = cleaned.casefold()
+        if dedupe_key in seen_queries:
+            continue
+        normalized_queries.append(cleaned)
+        seen_queries.add(dedupe_key)
+        if len(normalized_queries) >= max_queries:
+            break
+    return normalized_queries
 
 
 def chinese_days(days: int) -> str:

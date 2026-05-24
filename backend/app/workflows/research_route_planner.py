@@ -9,7 +9,12 @@ from backend.app.providers.amap import require_amap_key
 from backend.app.schemas.route_plan import TripRoutePlanResponse
 from backend.app.schemas.trip_request import TripGenerateRouteRequest
 from backend.app.services.candidate_enrichment import enrich_candidates_with_amap
-from backend.app.services.travel_research import collect_research, extract_candidate_pool
+from backend.app.services.planner_logging import (
+    compact_candidates_for_log,
+    log_planner_event,
+    new_request_id,
+)
+from backend.app.services.travel_research import generate_hot_candidate_pool
 
 
 def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePlanResponse:
@@ -20,19 +25,30 @@ def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePl
     返回值：
         返回前端可直接渲染的每日路线规划响应。
     """
+    request_id = new_request_id()
     destination = request.destination.strip()
     preferences = [preference.strip() for preference in request.preferences if preference.strip()]
-    research_bundle = collect_research(
+    candidate_pool_result = generate_hot_candidate_pool(
         destination,
         request.days,
         preferences,
-        max_results=request.max_search_results,
-    )
-    raw_candidates = extract_candidate_pool(
-        research_bundle,
-        destination,
-        preferences,
+        max_search_results=request.max_search_results,
         max_candidates=request.max_candidates,
+    )
+    research_bundle = candidate_pool_result.research_bundle
+    raw_candidates = candidate_pool_result.candidates
+    log_planner_event(
+        "llm_raw_candidate_pool",
+        request_id,
+        {
+            "destination": destination,
+            "days": request.days,
+            "preferences": preferences,
+            "max_candidates": request.max_candidates,
+            "stage": "候选景点池 Agent 生成多 query 搜索计划后，从网页 markdown 中抽取并按提及频率/偏好分排序的热门候选池",
+            "query_plan": research_bundle.query_plan,
+            "candidates": compact_candidates_for_log(raw_candidates),
+        },
     )
     if request.preferred_spots:
         raw_candidates = merge_preferred_spots(raw_candidates, request.preferred_spots)
@@ -51,6 +67,19 @@ def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePl
         api_key=api_key,
         max_candidates=request.max_candidates,
     )
+    log_planner_event(
+        "amap_enriched_candidate_pool",
+        request_id,
+        {
+            "destination": destination,
+            "days": request.days,
+            "preferences": preferences,
+            "max_candidates": request.max_candidates,
+            "stage": "高德 POI 搜索和坐标补全后的候选池",
+            "warnings": poi_warnings,
+            "candidates": compact_candidates_for_log(enriched_candidates),
+        },
+    )
     required_candidates = request.days * request.min_cluster_size
     if len(enriched_candidates) < required_candidates:
         raise ValueError(
@@ -64,6 +93,8 @@ def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePl
         request.days,
         api_key=api_key,
         min_cluster_size=request.min_cluster_size,
+        request_id=request_id,
+        preferences=preferences,
     )
     route_plan.candidate_count = len(enriched_candidates)
     candidate_builder = next(
@@ -87,6 +118,7 @@ def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePl
         "enriched_candidate_count": len(enriched_candidates),
         "candidate_builder": candidate_builder,
         "model": candidate_model,
+        "request_id": request_id,
         "sources": [
             {
                 "title": document.title,
