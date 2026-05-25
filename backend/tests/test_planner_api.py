@@ -297,6 +297,15 @@ class PlannerApiTests(unittest.TestCase):
                     "daywind": "东风",
                 }
             ],
+        ), patch(
+            "backend.app.services.itinerary_details.build_llm_day_theme",
+            side_effect=RuntimeError("LLM unavailable"),
+        ), patch(
+            "backend.app.services.itinerary_details.get_unsplash_service",
+            return_value=FakeUnsplashService(),
+        ), patch(
+            "backend.app.services.itinerary_details.build_llm_image_queries",
+            return_value=["Nanjing Sun Yat-sen Mausoleum"],
         ):
             response = self.client.post("/api/planner/itinerary-details", json=payload)
 
@@ -304,10 +313,17 @@ class PlannerApiTests(unittest.TestCase):
         data = response.json()
         detail = data["days"][0]["itinerary_detail"]
         self.assertEqual(["中山陵", "明孝陵"], detail["original_route"])
+        self.assertEqual("中山陵与明孝陵一日游", detail["day_theme"])
         self.assertEqual("ok", detail["weather"]["status"])
         self.assertTrue(detail["activities"])
         self.assertEqual(2, len(detail["meals"]))
         self.assertTrue(detail["notices"])
+        self.assertEqual(
+            "https://images.unsplash.com/photo-test",
+            data["days"][0]["spots"][0]["image_url"],
+        )
+        self.assertEqual("FloatTrip 摄影师", data["days"][0]["spots"][0]["image_photographer"])
+        self.assertTrue(any("每日主题 LLM 生成失败" in warning for warning in data["warnings"]))
 
     def test_itinerary_details_uses_nearest_weather_when_trip_date_is_out_of_range(self) -> None:
         """功能：验证出行日超出预报范围时仍展示最近可用天气参考。
@@ -374,6 +390,9 @@ class PlannerApiTests(unittest.TestCase):
         ), patch(
             "backend.app.services.itinerary_details.amap.require_amap_key",
             return_value=None,
+        ), patch(
+            "backend.app.services.itinerary_details.build_llm_day_theme",
+            return_value="中山陵深度慢游",
         ):
             response = self.client.post("/api/planner/itinerary-details", json=payload)
 
@@ -461,6 +480,9 @@ class PlannerApiTests(unittest.TestCase):
         ), patch(
             "backend.app.services.itinerary_details.amap.query_weather",
             return_value=[],
+        ), patch(
+            "backend.app.services.itinerary_details.build_llm_day_theme",
+            return_value="中山陵美食慢游",
         ):
             response = self.client.post("/api/planner/itinerary-details", json=payload)
 
@@ -594,3 +616,32 @@ def fake_pois(keyword: str, admin_region: str, api_key: str, offset: int) -> lis
             "location": location,
         }
     ]
+
+
+class FakeUnsplashService:
+    """功能：模拟已配置的 Unsplash 服务。"""
+
+    def is_configured(self) -> bool:
+        """功能：返回服务已配置状态。
+
+        参数：
+            无。
+        返回值：
+            始终返回 True。
+        """
+        return True
+
+    def get_photo(self, query: str) -> dict:
+        """功能：返回模拟景点图片。
+
+        参数：
+            query：图片搜索关键词。
+        返回值：
+            返回符合后端图片字段的字典。
+        """
+        return {
+            "url": "https://images.unsplash.com/photo-test",
+            "thumb": "https://images.unsplash.com/photo-test-thumb",
+            "description": f"{query} 图片",
+            "photographer": "FloatTrip 摄影师",
+        }

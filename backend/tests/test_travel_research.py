@@ -100,6 +100,24 @@ class TravelResearchTests(unittest.TestCase):
             ],
         )
 
+    def test_sort_candidates_node_rejects_empty_structured_candidate_pool(self) -> None:
+        """功能：验证结构化候选池为空时返回明确错误而不是 AttributeError。
+
+        参数：
+            无。
+        返回值：
+            无返回值；通过 unittest 断言验证错误提示。
+        """
+        with self.assertRaisesRegex(RuntimeError, "DeepSeek 未返回候选景点池"):
+            research.sort_candidates_node(
+                {
+                    "candidate_pool": None,
+                    "markdown_guides": "中山陵 夫子庙",
+                    "markdown_documents": ["中山陵 夫子庙"],
+                    "max_candidates": 8,
+                }
+            )
+
     def test_build_candidate_dicts_adds_builder_model_score_and_sources(self) -> None:
         """功能：验证候选字典会补充构建器、模型、分数和来源文档。
 
@@ -242,6 +260,239 @@ class TravelResearchTests(unittest.TestCase):
 
         self.assertEqual("南京 热门旅游景点", result["query_plan"][0])
         self.assertIn("南京 博物馆 景点推荐", result["query_plan"])
+
+    def test_search_markdown_research_tool_merges_multiple_rounds(self) -> None:
+        """功能：验证 Agent 搜索工具会合并多轮真实搜索结果并按 URL 去重。
+
+        参数：
+            无。
+        返回值：
+            无返回值；通过 unittest 断言验证合并结果。
+        """
+        existing_bundle = research.ResearchBundle(
+            query_plan=["南京 热门旅游景点"],
+            search_results=[
+                research.SearchResult(
+                    title="南京热门景点",
+                    url="https://example.com/hot",
+                    snippet="中山陵 夫子庙",
+                    source="test",
+                )
+            ],
+            documents=[
+                research.ResearchDocument(
+                    title="南京热门景点",
+                    url="https://example.com/hot",
+                    source="test",
+                    text="中山陵 夫子庙",
+                )
+            ],
+            warnings=[],
+        )
+        new_bundle = research.ResearchBundle(
+            query_plan=["南京 必去景点"],
+            search_results=[
+                research.SearchResult(
+                    title="重复页面",
+                    url="https://example.com/hot",
+                    snippet="中山陵",
+                    source="test",
+                ),
+                research.SearchResult(
+                    title="南京必去景点",
+                    url="https://example.com/must",
+                    snippet="明孝陵 南京博物院",
+                    source="test",
+                ),
+            ],
+            documents=[
+                research.ResearchDocument(
+                    title="重复页面",
+                    url="https://example.com/hot",
+                    source="test",
+                    text="中山陵",
+                ),
+                research.ResearchDocument(
+                    title="南京必去景点",
+                    url="https://example.com/must",
+                    source="test",
+                    text="明孝陵 南京博物院",
+                ),
+            ],
+            warnings=[],
+        )
+
+        with patch(
+            "backend.app.services.travel_research.collect_research_for_queries",
+            return_value=new_bundle,
+        ):
+            merged = research.search_markdown_research_tool(
+                ["南京 必去景点"],
+                existing_bundle=existing_bundle,
+                max_results=8,
+            )
+
+        self.assertEqual(["南京 热门旅游景点", "南京 必去景点"], merged.query_plan)
+        self.assertEqual(
+            ["https://example.com/hot", "https://example.com/must"],
+            [result.url for result in merged.search_results],
+        )
+        self.assertEqual(2, len(merged.documents))
+
+    def test_candidate_pool_quality_check_requests_more_search_when_evidence_is_low(self) -> None:
+        """功能：验证候选池数量或文档证据不足时 Agent 会继续搜索。
+
+        参数：
+            无。
+        返回值：
+            无返回值；通过 unittest 断言验证质量判断。
+        """
+        state = {
+            "days": 3,
+            "max_candidates": 20,
+            "search_iterations": 1,
+            "markdown_documents": ["中山陵 夫子庙"],
+            "research_bundle": research.ResearchBundle(
+                query_plan=["南京 热门旅游景点"],
+                search_results=[],
+                documents=[],
+                warnings=[],
+            ),
+            "ranked_candidate_pool": research.RankedCandidatePool(
+                candidate_pool=[
+                    research.RankedAttractionCandidate(
+                        name="中山陵",
+                        preference_score=8,
+                        mention_count=1,
+                    )
+                ]
+            ),
+        }
+
+        self.assertTrue(
+            research.candidate_pool_needs_more_search(
+                state,
+                max_search_iterations=3,
+                max_search_results=8,
+            )
+        )
+
+    def test_candidate_pool_quality_check_continues_after_initial_search_budget(self) -> None:
+        """功能：验证首轮搜索结果已满但候选仍少时 Agent 仍会继续补搜。
+
+        参数：
+            无。
+        返回值：
+            无返回值；通过 unittest 断言验证质量判断。
+        """
+        state = {
+            "days": 3,
+            "max_candidates": 20,
+            "search_iterations": 1,
+            "markdown_documents": ["南京汤山一品温泉 汤山紫清湖旅游区森林温泉"],
+            "research_bundle": research.ResearchBundle(
+                query_plan=["南京 热门旅游景点"],
+                search_results=[
+                    research.SearchResult(
+                        title=f"结果{index}",
+                        url=f"https://example.com/{index}",
+                        snippet="南京景点",
+                        source="test",
+                    )
+                    for index in range(8)
+                ],
+                documents=[
+                    research.ResearchDocument(
+                        title="南京温泉",
+                        url="https://example.com/hot-spring",
+                        source="test",
+                        text="南京汤山一品温泉 汤山紫清湖旅游区森林温泉",
+                    )
+                ],
+                warnings=[],
+            ),
+            "ranked_candidate_pool": research.RankedCandidatePool(
+                candidate_pool=[
+                    research.RankedAttractionCandidate(
+                        name="南京汤山一品温泉",
+                        preference_score=5,
+                        mention_count=1,
+                    ),
+                    research.RankedAttractionCandidate(
+                        name="汤山紫清湖旅游区森林温泉",
+                        preference_score=5,
+                        mention_count=1,
+                    ),
+                ]
+            ),
+        }
+
+        self.assertTrue(
+            research.candidate_pool_needs_more_search(
+                state,
+                max_search_iterations=3,
+                max_search_results=8,
+            )
+        )
+
+    def test_collect_research_node_expands_search_budget_on_followup(self) -> None:
+        """功能：验证补充搜索轮次会扩大搜索预算，避免被首轮 8 条结果卡住。
+
+        参数：
+            无。
+        返回值：
+            无返回值；通过 unittest 断言验证传给搜索工具的 max_results。
+        """
+        bundle = research.ResearchBundle(
+            query_plan=["南京 旅游景点排名"],
+            search_results=[],
+            documents=[
+                research.ResearchDocument(
+                    title="南京景点",
+                    url="https://example.com/nanjing",
+                    source="test",
+                    text="中山陵 夫子庙 南京博物院",
+                )
+            ],
+            warnings=[],
+        )
+
+        with patch(
+            "backend.app.services.travel_research.search_markdown_research_tool",
+            return_value=bundle,
+        ) as search_tool:
+            node = research.collect_research_node(
+                per_query_limit=3,
+                max_search_results=8,
+                max_page_chars=12_000,
+            )
+            node(
+                {
+                    "pending_search_queries": ["南京 旅游景点排名"],
+                    "search_iterations": 1,
+                }
+            )
+
+        self.assertEqual(16, search_tool.call_args.kwargs["max_results"])
+
+    def test_followup_query_plan_filters_existing_queries(self) -> None:
+        """功能：验证补充 query 会避开已搜索词并保留新搜索方向。
+
+        参数：
+            无。
+        返回值：
+            无返回值；通过 unittest 断言验证补充 query。
+        """
+        queries = research.normalize_followup_query_plan(
+            ["南京 热门旅游景点", "南京 旅游景点排名"],
+            "南京",
+            3,
+            ["历史文化"],
+            existing_queries=["南京 热门旅游景点"],
+        )
+
+        self.assertIn("南京 旅游景点排名", queries)
+        self.assertNotIn("南京 热门旅游景点", queries)
 
 
 if __name__ == "__main__":

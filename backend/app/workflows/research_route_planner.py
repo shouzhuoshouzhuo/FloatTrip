@@ -47,6 +47,9 @@ def build_generated_route_plan(request: TripGenerateRouteRequest) -> TripRoutePl
             "max_candidates": request.max_candidates,
             "stage": "候选景点池 Agent 生成多 query 搜索计划后，从网页 markdown 中抽取并按提及频率/偏好分排序的热门候选池",
             "query_plan": research_bundle.query_plan,
+            "search_result_count": len(research_bundle.search_results),
+            "accepted_document_count": len(research_bundle.documents),
+            "warnings": research_bundle.warnings,
             "candidates": compact_candidates_for_log(raw_candidates),
         },
     )

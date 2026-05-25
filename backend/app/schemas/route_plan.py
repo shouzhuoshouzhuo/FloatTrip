@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date as date_type
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from backend.app.schemas.trip_request import Location
+from backend.app.schemas.trip_request import Location, TripGenerateRouteRequest
 
 
 class SpotMapItem(BaseModel):
@@ -19,6 +20,9 @@ class SpotMapItem(BaseModel):
     address: str | None = None
     poi_type: str | None = None
     image_url: str | None = None
+    image_thumb_url: str | None = None
+    image_description: str | None = None
+    image_photographer: str | None = None
     brief_intro: str | None = None
     raw_candidate: dict[str, Any] = Field(default_factory=dict)
 
@@ -40,6 +44,69 @@ class RouteSegment(BaseModel):
     amap_transit: dict[str, Any] | None = None
     fallback_mode: str | None = None
     path: list[Location] = Field(default_factory=list)
+
+
+class DayWeather(BaseModel):
+    """行程详情页展示的当日天气和穿衣建议。"""
+
+    date: date_type | None = None
+    city: str | None = None
+    status: Literal["ok", "unavailable", "missing_start_date"] = "unavailable"
+    weather: str | None = None
+    temperature: str | None = None
+    wind: str | None = None
+    dressing_advice: str | None = None
+
+
+class MealRecommendation(BaseModel):
+    """行程详情页展示的午餐或晚餐推荐。"""
+
+    meal_type: Literal["lunch", "dinner"]
+    restaurant_name: str
+    address: str | None = None
+    location: Location | None = None
+    distance_meters: int | None = None
+    reason: str
+    source_poi: dict[str, Any] = Field(default_factory=dict)
+
+
+class ItineraryActivity(BaseModel):
+    """行程详情页时间线中的单个活动。"""
+
+    type: Literal["spot", "meal", "transit", "buffer"]
+    start_time: str
+    end_time: str
+    title: str
+    description: str
+    location: Location | None = None
+    related_spot_id: str | None = None
+    travel_summary: str | None = None
+    tag: str | None = None
+
+
+class DayNotice(BaseModel):
+    """行程详情页展示的天气、路线或高峰提醒。"""
+
+    level: Literal["info", "warning"] = "info"
+    title: str
+    content: str
+    basis: Literal["weather", "crowd", "route", "meal", "general"] = "general"
+
+
+class DayItineraryDetail(BaseModel):
+    """某一天的可展示日程详情。"""
+
+    original_route: list[str] = Field(default_factory=list)
+    day_theme: str | None = None
+    hero_image_url: str | None = None
+    hero_image_thumb_url: str | None = None
+    hero_image_description: str | None = None
+    hero_image_photographer: str | None = None
+    hero_image_source: Literal["theme", "spot"] | None = None
+    weather: DayWeather = Field(default_factory=DayWeather)
+    activities: list[ItineraryActivity] = Field(default_factory=list)
+    meals: list[MealRecommendation] = Field(default_factory=list)
+    notices: list[DayNotice] = Field(default_factory=list)
 
 
 class DaySummaryMetrics(BaseModel):
@@ -64,6 +131,7 @@ class DayRoutePlan(BaseModel):
     summary_metrics: DaySummaryMetrics
     duration_matrix_seconds: list[list[int | None]] | None = None
     optimized_order: list[str] = Field(default_factory=list)
+    itinerary_detail: DayItineraryDetail | None = None
 
 
 class TripRoutePlanResponse(BaseModel):
@@ -78,3 +146,13 @@ class TripRoutePlanResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     research_summary: dict[str, Any] | None = None
     candidate_count: int | None = None
+
+
+class ItineraryDetailsRequest(BaseModel):
+    """基于已有路线补全行程详情的请求结构。"""
+
+    original_request: TripGenerateRouteRequest
+    route_plan: TripRoutePlanResponse
+    transport_mode: str | None = "amap_transit"
+    preferences: list[str] = Field(default_factory=list)
+    start_date: date_type | None = None

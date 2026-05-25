@@ -22,7 +22,7 @@ TAVILY_MAX_RESULTS = 20
 MIN_CONTENT_CHARS = 200
 DEFAULT_SEARCH_TIMEOUT = 20.0
 DEFAULT_FETCH_TIMEOUT = 10.0
-PRIORITY_SEARCH_DOMAINS = ("bendibao.com",)
+PRIORITY_SEARCH_DOMAINS = ("bendibao.com", "you.ctrip.com")
 REMOVED_TAGS = {
     "aside",
     "button",

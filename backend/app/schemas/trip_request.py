@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 import re
 
 from pydantic import BaseModel, Field, field_validator
@@ -23,6 +24,7 @@ class TripGenerateRouteRequest(BaseModel):
     destination: str = Field(min_length=1)
     days: int = Field(ge=1, le=7)
     pace: str | None = None
+    start_date: date | None = None
     preferences: list[str] = Field(default_factory=list)
     preferred_spots: list[str] = Field(default_factory=list)
     avoided_spots: list[str] = Field(default_factory=list)

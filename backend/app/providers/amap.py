@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 import time
 import urllib.parse
 import urllib.request
@@ -20,49 +19,15 @@ USER_AGENT = (
 )
 LOCAL_ENV_FILE = Path(__file__).resolve().parents[3] / ".env.local"
 AMAP_TEXT_SEARCH_URL = "https://restapi.amap.com/v3/place/text"
+AMAP_AROUND_SEARCH_URL = "https://restapi.amap.com/v3/place/around"
 AMAP_TRANSIT_URL = "https://restapi.amap.com/v3/direction/transit/integrated"
 AMAP_WALKING_URL = "https://restapi.amap.com/v3/direction/walking"
-
-ATTRACTION_TYPE_KEYWORDS = (
-    "风景名胜",
-    "公园广场",
-    "博物馆",
-    "展览馆",
-    "美术馆",
-    "科技馆",
-    "纪念馆",
-    "寺庙",
-    "道观",
-    "教堂",
-    "文化宫",
-    "文物古迹",
-    "动物园",
-    "植物园",
-    "水族馆",
-    "海洋馆",
-    "游乐场",
-    "主题乐园",
-    "度假区",
-    "自然地名",
-)
-
-BLOCKED_TYPE_KEYWORDS = (
-    "住宿服务",
-    "餐饮服务",
-    "购物服务",
-    "生活服务",
-    "公司企业",
-    "商务住宅",
-    "金融保险",
-    "汽车服务",
-    "汽车维修",
-    "摩托车服务",
-    "医疗保健",
-    "政府机构",
-    "科教文化服务;学校",
-    "交通设施服务",
-    "道路附属设施",
-)
+AMAP_WEATHER_URL = "https://restapi.amap.com/v3/weather/weatherInfo"
+AMAP_RATE_LIMIT_INFOS = {
+    "CUQPS_HAS_EXCEEDED_THE_LIMIT",
+    "USER_DAILY_QUERY_OVER_LIMIT",
+    "USER_KEY_RECYCLED",
+}
 
 
 def load_local_env() -> None:
@@ -147,7 +112,13 @@ def redact_url(url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(query=redacted_query))
 
 
-def search_amap_pois(keyword: str, admin_region: str, api_key: str, offset: int) -> list[dict[str, Any]]:
+def search_amap_pois(
+    keyword: str,
+    admin_region: str,
+    api_key: str,
+    offset: int,
+    max_retries: int = 3,
+) -> list[dict[str, Any]]:
     """功能：调用高德关键字地点搜索，返回指定行政区内的候选地点列表。
 
     参数：
@@ -155,6 +126,7 @@ def search_amap_pois(keyword: str, admin_region: str, api_key: str, offset: int)
         admin_region：行政区名称或行政区编码。
         api_key：高德 Web 服务 Key。
         offset：单页返回数量。
+        max_retries：遇到高德限流类错误时的最大重试次数。
     返回值：
         返回高德 POI 原始字典列表。
     """
@@ -169,172 +141,64 @@ def search_amap_pois(keyword: str, admin_region: str, api_key: str, offset: int)
         "output": "json",
     }
     url = f"{AMAP_TEXT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
-    data = http_get_json(url)
-    if data.get("status") != "1":
-        info = data.get("info") or "未知错误"
-        raise RuntimeError(f"高德 POI 搜索失败：{info}")
-    pois = data.get("pois", [])
-    return pois if isinstance(pois, list) else []
+    for attempt in range(max_retries + 1):
+        data = http_get_json(url)
+        if data.get("status") == "1":
+            pois = data.get("pois", [])
+            return pois if isinstance(pois, list) else []
+
+        info = str(data.get("info") or "未知错误")
+        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= max_retries:
+            raise RuntimeError(f"高德 POI 搜索失败：{info}")
+        time.sleep(1.2 * (attempt + 1))
+
+    return []
 
 
-def choose_attraction_poi(
-    candidate_name: str,
-    pois: list[dict[str, Any]],
-    admin_region: str,
-) -> dict[str, Any] | None:
-    """功能：从高德返回的多个地点中选择最像真实景点的一个。
-
-    参数：
-        candidate_name：候选景点名称。
-        pois：高德 POI 原始候选列表。
-        admin_region：用户指定行政区名称或编码。
-    返回值：
-        返回最佳 POI 字典；没有合适景点时返回 None。
-    """
-    best_poi: dict[str, Any] | None = None
-    best_score = -1
-    for poi in pois:
-        if not isinstance(poi, dict):
-            continue
-        poi_type = str(poi.get("type", ""))
-        poi_name = str(poi.get("name", ""))
-        if not is_attraction_type(poi_type) or not is_in_admin_region(poi, admin_region):
-            continue
-        score = match_score(candidate_name, poi_name, poi_type)
-        if score > best_score:
-            best_score = score
-            best_poi = poi
-    return best_poi
-
-
-def is_in_admin_region(poi: dict[str, Any], admin_region: str) -> bool:
-    """功能：判断地点是否属于用户指定的行政区名称或行政区编码。
+def search_around_pois(
+    keyword: str,
+    location: dict[str, float],
+    api_key: str,
+    *,
+    radius: int = 1500,
+    offset: int = 6,
+    max_retries: int = 3,
+) -> list[dict[str, Any]]:
+    """功能：调用高德周边搜索，围绕坐标查找餐饮、景点等 POI。
 
     参数：
-        poi：高德 POI 原始字典。
-        admin_region：行政区名称或行政区编码。
+        keyword：待搜索关键词，例如“餐厅”。
+        location：中心点坐标，格式为 {"lng": 经度, "lat": 纬度}。
+        api_key：高德 Web 服务 Key。
+        radius：搜索半径，单位为米。
+        offset：单页返回数量。
+        max_retries：遇到高德限流类错误时的最大重试次数。
     返回值：
-        属于目标行政区返回 True，否则返回 False。
+        返回高德 POI 原始字典列表。
     """
-    region = admin_region.strip()
-    if not region:
-        return False
+    params = {
+        "key": api_key,
+        "keywords": keyword,
+        "location": f"{location['lng']},{location['lat']}",
+        "radius": str(radius),
+        "offset": str(offset),
+        "page": "1",
+        "extensions": "all",
+        "output": "json",
+    }
+    url = f"{AMAP_AROUND_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+    for attempt in range(max_retries + 1):
+        data = http_get_json(url)
+        if data.get("status") == "1":
+            pois = data.get("pois", [])
+            return pois if isinstance(pois, list) else []
 
-    adcode = str(poi.get("adcode", "")).strip()
-    if re.fullmatch(r"\d{6}", region):
-        return adcode_matches_region(adcode, region)
+        info = str(data.get("info") or "未知错误")
+        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= max_retries:
+            raise RuntimeError(f"高德周边搜索失败：{info}")
+        time.sleep(1.2 * (attempt + 1))
 
-    expected_name = normalize_region_name(region)
-    poi_region_names = (
-        poi.get("pname", ""),
-        poi.get("cityname", ""),
-        poi.get("adname", ""),
-    )
-    return any(
-        normalize_region_name(str(name)) == expected_name
-        for name in poi_region_names
-        if name
-    )
-
-
-def adcode_matches_region(poi_adcode: str, region_adcode: str) -> bool:
-    """功能：按省、市、区县三级行政区编码前缀规则判断行政区是否匹配。
-
-    参数：
-        poi_adcode：POI 自身行政区编码。
-        region_adcode：用户指定行政区编码。
-    返回值：
-        编码层级匹配返回 True，否则返回 False。
-    """
-    if not re.fullmatch(r"\d{6}", poi_adcode):
-        return False
-    if region_adcode.endswith("0000"):
-        return poi_adcode[:2] == region_adcode[:2]
-    if region_adcode.endswith("00"):
-        return poi_adcode[:4] == region_adcode[:4]
-    return poi_adcode == region_adcode
-
-
-def normalize_region_name(region: str) -> str:
-    """功能：去掉常见行政区后缀，提升城市名和区县名匹配稳定性。
-
-    参数：
-        region：原始行政区名称。
-    返回值：
-        返回去掉常见后缀后的行政区名称。
-    """
-    normalized = region.strip()
-    for suffix in ("特别行政区", "自治州", "自治区", "省", "市", "区", "县"):
-        if normalized.endswith(suffix):
-            return normalized[: -len(suffix)]
-    return normalized
-
-
-def is_attraction_type(poi_type: str) -> bool:
-    """功能：判断高德地点类型是否属于可游玩的景点范围。
-
-    参数：
-        poi_type：高德 POI type 字段。
-    返回值：
-        类型适合作为景点返回 True，否则返回 False。
-    """
-    if not poi_type:
-        return False
-    if any(blocked in poi_type for blocked in BLOCKED_TYPE_KEYWORDS):
-        return False
-    return any(keyword in poi_type for keyword in ATTRACTION_TYPE_KEYWORDS)
-
-
-def match_score(candidate_name: str, poi_name: str, poi_type: str) -> int:
-    """功能：根据名称相似度和地点类型为候选匹配打分。
-
-    参数：
-        candidate_name：候选景点名称。
-        poi_name：高德 POI 名称。
-        poi_type：高德 POI 类型。
-    返回值：
-        返回越大越匹配的整数分数。
-    """
-    score = 0
-    if candidate_name == poi_name:
-        score += 100
-    elif candidate_name in poi_name or poi_name in candidate_name:
-        score += 70
-    else:
-        score += common_char_score(candidate_name, poi_name)
-
-    if "风景名胜" in poi_type:
-        score += 20
-    if any(keyword in poi_type for keyword in ("博物馆", "纪念馆", "公园广场", "文物古迹")):
-        score += 12
-    return score
-
-
-def common_char_score(left: str, right: str) -> int:
-    """功能：用有意义字符的交集比例估算两个中文名称的相似度。
-
-    参数：
-        left：第一个名称。
-        right：第二个名称。
-    返回值：
-        返回 0 到 40 之间的相似分。
-    """
-    left_chars = {char for char in left if is_meaningful_char(char)}
-    right_chars = {char for char in right if is_meaningful_char(char)}
-    if not left_chars or not right_chars:
-        return 0
-    return int(40 * len(left_chars & right_chars) / len(left_chars | right_chars))
-
-
-def is_meaningful_char(char: str) -> bool:
-    """功能：判断字符是否适合参与景点名称相似度计算。
-
-    参数：
-        char：单个字符。
-    返回值：
-        中文、英文或数字返回 True，否则返回 False。
-    """
-    return bool(re.match(r"[\u4e00-\u9fa5A-Za-z0-9]", char))
+    return []
 
 
 def parse_location(value: Any) -> dict[str, float] | None:
@@ -372,6 +236,7 @@ def normalize_poi(poi: dict[str, Any]) -> dict[str, Any]:
         "city": str(poi.get("cityname", "")),
         "district": str(poi.get("adname", "")),
         "address": normalize_address(poi.get("address")),
+        "distance_meters": int_or_none(poi.get("distance")),
         "location": parse_location(poi.get("location")),
     }
     return {key: value for key, value in normalized.items() if value not in ("", None, [])}
@@ -388,6 +253,33 @@ def normalize_address(value: Any) -> str:
     if isinstance(value, list):
         return " ".join(str(item) for item in value if item)
     return str(value or "")
+
+
+def query_weather(city: str, api_key: str) -> list[dict[str, Any]]:
+    """功能：调用高德天气预报接口，返回城市未来天气列表。
+
+    参数：
+        city：目的地城市名称或行政区编码。
+        api_key：高德 Web 服务 Key。
+    返回值：
+        返回高德 forecasts[0].casts 列表；没有可用天气时返回空列表。
+    """
+    params = {
+        "key": api_key,
+        "city": city,
+        "extensions": "all",
+        "output": "json",
+    }
+    data = http_get_json(f"{AMAP_WEATHER_URL}?{urllib.parse.urlencode(params)}")
+    if data.get("status") != "1":
+        raise RuntimeError(
+            f"高德天气查询失败：info={data.get('info')}, infocode={data.get('infocode')}"
+        )
+    forecasts = data.get("forecasts", [])
+    if not isinstance(forecasts, list) or not forecasts:
+        return []
+    casts = forecasts[0].get("casts", []) if isinstance(forecasts[0], dict) else []
+    return casts if isinstance(casts, list) else []
 
 
 class AMapRouteError(RuntimeError):

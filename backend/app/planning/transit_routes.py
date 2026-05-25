@@ -7,7 +7,10 @@ import math
 import time
 from typing import Any
 
-from backend.app.planning.day_clustering import cluster_candidates_by_days
+from backend.app.planning.day_clustering import (
+    cluster_candidates_by_days,
+    prepare_candidates_for_clustering,
+)
 from backend.app.providers import amap
 from backend.app.schemas.route_plan import (
     DayRoutePlan,
@@ -15,6 +18,11 @@ from backend.app.schemas.route_plan import (
     RouteSegment,
     SpotMapItem,
     TripRoutePlanResponse,
+)
+from backend.app.services.planner_logging import (
+    compact_candidates_for_log,
+    compact_clusters_for_log,
+    log_planner_event,
 )
 
 
@@ -34,6 +42,8 @@ def build_daily_transit_route_plan(
     max_iterations: int = 50,
     request_interval: float = 0.4,
     max_day_radius_km: float = 6.0,
+    request_id: str | None = None,
+    preferences: list[str] | None = None,
 ) -> TripRoutePlanResponse:
     """功能：把已补高德坐标的候选景点生成可直接返回前端的每日真实路线。
 
@@ -47,6 +57,8 @@ def build_daily_transit_route_plan(
         max_iterations：地理聚类最大迭代次数。
         request_interval：两次高德路线请求之间的等待秒数。
         max_day_radius_km：每天围绕簇中心补点时允许的最大半径。
+        request_id：一次规划调用的请求追踪 ID，用于串联日志。
+        preferences：用户偏好列表，用于写入聚类输入日志。
     返回值：
         返回 TripRoutePlanResponse，包含每日景点、访问顺序、真实路线段和警告信息。
     """
@@ -54,12 +66,45 @@ def build_daily_transit_route_plan(
     if not destination_text:
         raise ValueError("destination must not be empty")
 
-    clusters = cluster_candidates_by_days(
+    cluster_input_candidates = prepare_candidates_for_clustering(
         candidates,
+        days,
+        min_cluster_size=min_cluster_size,
+    )
+    if request_id:
+        log_planner_event(
+            "cluster_input_candidate_pool",
+            request_id,
+            {
+                "destination": destination_text,
+                "days": days,
+                "preferences": preferences or [],
+                "min_cluster_size": min_cluster_size,
+                "max_iterations": max_iterations,
+                "stage": "按用户必去优先、分数、出现次数截取后的实际聚类输入；数量上限为 3 * days",
+                "candidates": compact_candidates_for_log(cluster_input_candidates),
+            },
+        )
+
+    clusters = cluster_candidates_by_days(
+        cluster_input_candidates,
         days,
         min_cluster_size=min_cluster_size,
         max_iterations=max_iterations,
     )
+    if request_id:
+        log_planner_event(
+            "cluster_result",
+            request_id,
+            {
+                "destination": destination_text,
+                "days": days,
+                "preferences": preferences or [],
+                "min_cluster_size": min_cluster_size,
+                "max_iterations": max_iterations,
+                "clusters": compact_clusters_for_log(clusters),
+            },
+        )
     warnings: list[str] = []
     day_plans: list[DayRoutePlan] = []
     clustered_candidate_ids = {

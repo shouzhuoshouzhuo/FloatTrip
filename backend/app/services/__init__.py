@@ -1,2 +1,5 @@
-"""Application services used by FloatTrip API workflows."""
+"""FloatTrip 后端应用服务模块。
 
+功能：
+    收纳网页调研、候选景点抽取和候选 POI 补全等服务，供工作流编排层调用。
+"""

@@ -7,7 +7,7 @@ from typing import Any
 
 
 EARTH_RADIUS_KM = 6371.0088
-MAX_CANDIDATES_PER_DAY = 4
+MAX_CLUSTER_INPUT_CANDIDATES_PER_DAY = 3
 
 
 def cluster_candidates_by_days(
@@ -17,7 +17,16 @@ def cluster_candidates_by_days(
     min_cluster_size: int = 2,
     max_iterations: int = 50,
 ) -> list[dict[str, Any]]:
-    """把候选景点聚成指定天数的地理区域，为后续每日路线规划做准备。"""
+    """功能：把候选景点聚成指定天数的地理区域，为每日路线规划做准备。
+
+    参数：
+        candidates：已补齐 poi.location 的候选景点字典列表。
+        days：旅行天数，也是需要生成的地理簇数量。
+        min_cluster_size：每个地理簇至少包含的候选景点数量。
+        max_iterations：K-Medoids 风格迭代的最大轮数。
+    返回值：
+        返回按天组织的聚类结果，每项包含 cluster_id、medoid、radius_km 和 candidates。
+    """
     points = prepare_candidates_for_clustering(
         candidates,
         days,
@@ -71,7 +80,15 @@ def prepare_candidates_for_clustering(
     *,
     min_cluster_size: int = 2,
 ) -> list[dict[str, Any]]:
-    """校验候选景点，并按分数截取参与聚类的优先窗口。"""
+    """功能：校验候选景点，并按用户必去优先级与分数截取参与聚类的优先窗口。
+
+    参数：
+        candidates：原始候选景点字典列表。
+        days：旅行天数。
+        min_cluster_size：每个地理簇至少需要的候选景点数量。
+    返回值：
+        返回通过坐标校验且按“必去优先、分数优先”截取后的前 3 * days 个候选景点。
+    """
     validate_cluster_inputs(candidates, days, min_cluster_size)
     for candidate in candidates:
         candidate_location(candidate)
@@ -83,10 +100,11 @@ def prepare_candidates_for_clustering(
             f"need at least {minimum_candidates} candidates for {days} day cluster(s)"
         )
 
-    limit = days * MAX_CANDIDATES_PER_DAY
+    limit = days * MAX_CLUSTER_INPUT_CANDIDATES_PER_DAY
     ranked = sorted(
         enumerate(candidates),
         key=lambda indexed: (
+            -candidate_user_requested_priority(indexed[1]),
             -candidate_rank_score(indexed[1]),
             -candidate_mention_count(indexed[1]),
             str(indexed[1].get("name", "")),
@@ -106,14 +124,22 @@ def validate_cluster_inputs(
     days: int,
     min_cluster_size: int,
 ) -> None:
-    """校验聚类输入的天数、最小簇大小和候选列表形态。"""
+    """功能：校验聚类输入的天数、最小簇大小和候选列表形态。
+
+    参数：
+        candidates：原始候选景点字典列表。
+        days：旅行天数。
+        min_cluster_size：每个地理簇至少需要的候选景点数量。
+    返回值：
+        无返回值；输入非法时抛出 ValueError。
+    """
     if days < 1:
         raise ValueError("days must be at least 1")
     if min_cluster_size < 1:
         raise ValueError("min_cluster_size must be at least 1")
-    if min_cluster_size > MAX_CANDIDATES_PER_DAY:
+    if min_cluster_size > MAX_CLUSTER_INPUT_CANDIDATES_PER_DAY:
         raise ValueError(
-            f"min_cluster_size cannot exceed {MAX_CANDIDATES_PER_DAY} in v1"
+            f"min_cluster_size cannot exceed {MAX_CLUSTER_INPUT_CANDIDATES_PER_DAY} in v1"
         )
     if not candidates:
         raise ValueError("candidates must not be empty")
@@ -122,7 +148,13 @@ def validate_cluster_inputs(
 
 
 def candidate_location(candidate: dict[str, Any]) -> tuple[float, float]:
-    """从候选景点中读取经纬度，返回高德常用的经度、纬度顺序。"""
+    """功能：从候选景点中读取经纬度，返回高德常用的经度、纬度顺序。
+
+    参数：
+        candidate：单个候选景点字典。
+    返回值：
+        返回 (lng, lat) 坐标元组。
+    """
     poi = candidate.get("poi")
     location = poi.get("location") if isinstance(poi, dict) else None
     if not isinstance(location, dict):
@@ -135,7 +167,15 @@ def candidate_location(candidate: dict[str, Any]) -> tuple[float, float]:
 
 
 def finite_float(value: Any, field: str, candidate: dict[str, Any]) -> float:
-    """把坐标字段转换成有限浮点数，并在异常时带上候选景点名称。"""
+    """功能：把坐标字段转换成有限浮点数，并在异常时带上候选景点名称。
+
+    参数：
+        value：待转换的坐标字段值。
+        field：字段名，用于错误信息。
+        candidate：当前候选景点字典，用于错误信息。
+    返回值：
+        返回转换后的有限浮点数。
+    """
     if isinstance(value, bool):
         raise ValueError(f"candidate has invalid {field}: {candidate_label(candidate)}")
     try:
@@ -150,12 +190,24 @@ def finite_float(value: Any, field: str, candidate: dict[str, Any]) -> float:
 
 
 def candidate_label(candidate: dict[str, Any]) -> str:
-    """生成用于错误信息的候选景点标签。"""
+    """功能：生成用于错误信息的候选景点标签。
+
+    参数：
+        candidate：单个候选景点字典。
+    返回值：
+        返回可读的候选景点名称标签。
+    """
     return repr(str(candidate.get("name") or "<unnamed>"))
 
 
 def candidate_mention_count(candidate: dict[str, Any]) -> int:
-    """读取并校验候选景点在攻略语料中的出现次数。"""
+    """功能：读取并校验候选景点在攻略语料中的出现次数。
+
+    参数：
+        candidate：单个候选景点字典。
+    返回值：
+        返回合法的正整数出现次数。
+    """
     value = candidate.get("mention_count")
     if isinstance(value, bool):
         raise ValueError(f"candidate has invalid mention_count: {candidate_label(candidate)}")
@@ -171,7 +223,13 @@ def candidate_mention_count(candidate: dict[str, Any]) -> int:
 
 
 def candidate_rank_score(candidate: dict[str, Any]) -> float:
-    """读取候选景点评分；没有评分时回退到出现次数。"""
+    """功能：读取候选景点评分；没有评分时回退到出现次数。
+
+    参数：
+        candidate：单个候选景点字典。
+    返回值：
+        返回用于排序的浮点评分。
+    """
     value = candidate.get("score")
     if value in (None, ""):
         return float(candidate_mention_count(candidate))
@@ -184,13 +242,37 @@ def candidate_rank_score(candidate: dict[str, Any]) -> float:
     return score if math.isfinite(score) else float(candidate_mention_count(candidate))
 
 
+def candidate_user_requested_priority(candidate: dict[str, Any]) -> int:
+    """功能：判断候选景点是否来自用户指定必去清单，用于聚类输入截取置顶。
+
+    参数：
+        candidate：单个候选景点字典。
+    返回值：
+        用户指定必去景点返回 1，否则返回 0。
+    """
+    return 1 if candidate.get("user_requested") is True else 0
+
+
 def mention_weight(candidate: dict[str, Any]) -> float:
-    """把出现次数转换成聚类权重，避免高频景点被低估。"""
+    """功能：把出现次数转换成聚类权重，避免高频景点被低估。
+
+    参数：
+        candidate：单个候选景点字典。
+    返回值：
+        返回用于聚类中心选择的权重。
+    """
     return 1.0 + math.log(max(1, candidate_mention_count(candidate)))
 
 
 def haversine_km(left: tuple[float, float], right: tuple[float, float]) -> float:
-    """用球面距离公式计算两个经纬度点之间的公里距离。"""
+    """功能：用球面距离公式计算两个经纬度点之间的公里距离。
+
+    参数：
+        left：第一个坐标点，格式为 (lng, lat)。
+        right：第二个坐标点，格式为 (lng, lat)。
+    返回值：
+        返回两点之间的球面距离，单位为公里。
+    """
     left_lng, left_lat = map(math.radians, left)
     right_lng, right_lat = map(math.radians, right)
     lat_delta = right_lat - left_lat
@@ -203,7 +285,13 @@ def haversine_km(left: tuple[float, float], right: tuple[float, float]) -> float
 
 
 def build_distance_matrix(locations: list[tuple[float, float]]) -> list[list[float]]:
-    """根据所有候选点坐标生成两两地理距离矩阵。"""
+    """功能：根据所有候选点坐标生成两两地理距离矩阵。
+
+    参数：
+        locations：候选景点坐标列表，每项格式为 (lng, lat)。
+    返回值：
+        返回对称距离矩阵，矩阵值单位为公里。
+    """
     distances = [[0.0 for _ in locations] for _ in locations]
     for left_index, left in enumerate(locations):
         for right_index in range(left_index + 1, len(locations)):
@@ -218,7 +306,15 @@ def initialize_medoids(
     weights: list[float],
     cluster_count: int,
 ) -> list[int]:
-    """用加权最远点策略初始化每日聚类中心。"""
+    """功能：用加权最远点策略初始化每日聚类中心。
+
+    参数：
+        distances：候选点之间的距离矩阵。
+        weights：每个候选点的提及频率权重。
+        cluster_count：需要初始化的聚类中心数量。
+    返回值：
+        返回聚类中心在候选列表中的索引列表。
+    """
     medoids = [max(range(len(weights)), key=lambda index: (weights[index], -index))]
     while len(medoids) < cluster_count:
         remaining = [index for index in range(len(weights)) if index not in medoids]
@@ -238,7 +334,14 @@ def assign_to_nearest_medoids(
     distances: list[list[float]],
     medoids: list[int],
 ) -> list[list[int]]:
-    """把每个候选点分配给最近的聚类中心。"""
+    """功能：把每个候选点分配给最近的聚类中心。
+
+    参数：
+        distances：候选点之间的距离矩阵。
+        medoids：当前聚类中心索引列表。
+    返回值：
+        返回按聚类中心分组的候选点索引列表。
+    """
     clusters = [[] for _ in medoids]
     for index in range(len(distances)):
         cluster_id = min(
@@ -255,7 +358,16 @@ def repair_small_clusters(
     distances: list[list[float]],
     min_cluster_size: int,
 ) -> None:
-    """当某个簇小于最小景点数时，从其他簇迁移代价最低的点。"""
+    """功能：当某个簇小于最小景点数时，从其他簇迁移代价最低的点。
+
+    参数：
+        clusters：按簇保存的候选点索引列表，会被原地调整。
+        medoids：当前聚类中心索引列表。
+        distances：候选点之间的距离矩阵。
+        min_cluster_size：每个簇至少需要的候选点数量。
+    返回值：
+        无返回值；无法修复时抛出 ValueError。
+    """
     while True:
         small_cluster_id = next(
             (
@@ -293,7 +405,15 @@ def update_medoids(
     distances: list[list[float]],
     weights: list[float],
 ) -> list[int]:
-    """在每个簇内部重新选择加权距离总和最小的真实候选点作为中心。"""
+    """功能：在每个簇内部重新选择加权距离总和最小的真实候选点作为中心。
+
+    参数：
+        clusters：按簇保存的候选点索引列表。
+        distances：候选点之间的距离矩阵。
+        weights：每个候选点的提及频率权重。
+    返回值：
+        返回新的聚类中心索引列表。
+    """
     medoids = []
     for members in clusters:
         if not members:

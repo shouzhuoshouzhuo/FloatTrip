@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FloatTrip - 行程详情</title>
+  <style>
+    :root {
+      --bg-top: #fbfdff;
+      --bg-mid: #edf8ff;
+      --bg-bottom: #cbeeff;
+      --ink: #123246;
+      --muted: #5f7b8f;
+      --faint: #8aa1b3;
+      --blue: #55b8ff;
+      --deep-blue: #238de0;
+      --cyan: #6ee7f8;
+      --indigo: #7c8cff;
+      --green: #66d6a1;
+      --orange: #ffc46b;
+      --rose: #ff9fb4;
+      --glass: rgba(255, 255, 255, .62);
+      --glass-strong: rgba(255, 255, 255, .86);
+      --line: rgba(74, 159, 218, .18);
+      --shadow: rgba(63, 140, 190, .14);
+      --radius-xl: 34px;
+      --radius-lg: 26px;
+      --radius-md: 20px;
+      --radius-pill: 999px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 12% 12%, rgba(111, 211, 255, .42), transparent 31%),
+        radial-gradient(circle at 82% 8%, rgba(150, 167, 255, .24), transparent 29%),
+        radial-gradient(circle at 74% 92%, rgba(98, 221, 236, .34), transparent 37%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 43%, var(--bg-bottom) 100%);
+      overflow-x: hidden;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      z-index: -2;
+      pointer-events: none;
+      border-radius: 50%;
+      filter: blur(12px);
+      animation: drift 13s ease-in-out infinite alternate;
+    }
+
+    body::before {
+      width: 520px;
+      height: 520px;
+      left: -190px;
+      top: 120px;
+      background: radial-gradient(circle, rgba(137, 218, 255, .34), transparent 68%);
+    }
+
+    body::after {
+      width: 640px;
+      height: 640px;
+      right: -260px;
+      bottom: -150px;
+      background: radial-gradient(circle, rgba(150, 185, 255, .28), transparent 70%);
+      animation-delay: -4s;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; }
+
+    @keyframes drift {
+      from { transform: translate3d(0, 0, 0) scale(1); }
+      to { transform: translate3d(34px, -22px, 0) scale(1.05); }
+    }
+
+    @keyframes pageIn {
+      from { opacity: 0; transform: translateY(18px); filter: blur(10px); }
+      to { opacity: 1; transform: translateY(0); filter: blur(0); }
+    }
+
+    @keyframes cardSurface {
+      from { opacity: 0; transform: translateY(24px) scale(.98); filter: blur(12px); }
+      to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+    }
+
+    @keyframes waterMove {
+      from { background-position: 0 0; }
+      to { background-position: 76px 0; }
+    }
+
+    .shell {
+      width: min(1420px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 24px 0 58px;
+    }
+
+    .water-nav {
+      position: sticky;
+      top: 18px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 14px;
+      border-radius: var(--radius-pill);
+      background: rgba(255,255,255,.58);
+      box-shadow:
+        0 18px 46px rgba(62,141,198,.16),
+        inset 0 1px 0 rgba(255,255,255,.78);
+      backdrop-filter: blur(22px) saturate(150%);
+      -webkit-backdrop-filter: blur(22px) saturate(150%);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-left: 8px;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.96), rgba(218,244,255,.82)),
+        radial-gradient(circle at 32% 22%, #80dcff, transparent 52%);
+      box-shadow: 0 16px 32px rgba(85,184,255,.25), inset 0 1px 0 rgba(255,255,255,.95);
+      font-size: 21px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .brand span span {
+      display: block;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 4px;
+      border-radius: var(--radius-pill);
+      background: rgba(227,246,255,.52);
+    }
+
+    .nav-tabs a {
+      border-radius: var(--radius-pill);
+      padding: 11px 15px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .nav-tabs a.active,
+    .nav-tabs a:hover {
+      color: #0f5e8e;
+      background: rgba(255,255,255,.88);
+      box-shadow: 0 10px 28px rgba(66,158,216,.16);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .icon-btn {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      color: #2474a5;
+      background: rgba(255,255,255,.58);
+      box-shadow: 0 12px 28px rgba(63,140,190,.12), inset 0 1px 0 rgba(255,255,255,.78);
+      cursor: pointer;
+    }
+
+    .hero-card,
+    .glass-card {
+      position: relative;
+      border: 1px solid rgba(255,255,255,.5);
+      border-radius: var(--radius-xl);
+      background: var(--glass);
+      box-shadow:
+        0 24px 70px var(--shadow),
+        inset 0 1px 0 rgba(255,255,255,.72);
+      backdrop-filter: blur(24px) saturate(142%);
+      -webkit-backdrop-filter: blur(24px) saturate(142%);
+      overflow: hidden;
+      animation: pageIn .58s ease both;
+    }
+
+    .hero-card::before,
+    .glass-card::before {
+      content: "";
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      right: -110px;
+      top: -120px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(109,218,255,.24), transparent 68%);
+      pointer-events: none;
+    }
+
+    .hero-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: end;
+      margin: 20px 0 22px;
+      padding: 30px;
+    }
+
+    .status-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+      padding: 8px 13px;
+      border-radius: var(--radius-pill);
+      color: #18925e;
+      background: rgba(213,250,232,.82);
+      box-shadow: 0 12px 36px rgba(79,155,206,.12);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .hero-card h2 {
+      margin: 0 0 14px;
+      font-size: clamp(34px, 3.8vw, 54px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    .shine {
+      color: transparent;
+      background: linear-gradient(115deg, #163a52 5%, #1a7db4 42%, #697cff 75%);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .meta-pill,
+    .soft-pill,
+    .day-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 0;
+      border-radius: var(--radius-pill);
+      color: #45728e;
+      background: rgba(255,255,255,.66);
+      box-shadow: 0 8px 18px rgba(71,145,190,.08);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .meta-pill {
+      min-height: 38px;
+      padding: 10px 14px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .primary-btn,
+    .ghost-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 46px;
+      border: 0;
+      border-radius: var(--radius-pill);
+      padding: 0 18px;
+      cursor: pointer;
+      font-weight: 850;
+      transition: transform .25s ease, box-shadow .25s ease;
+    }
+
+    .primary-btn {
+      color: #fff;
+      background: linear-gradient(135deg, #45b8ff, #7b83ff);
+      box-shadow: 0 18px 34px rgba(67,141,237,.26);
+    }
+
+    .ghost-btn {
+      color: #226c98;
+      background: rgba(255,255,255,.72);
+      box-shadow: 0 12px 24px rgba(71,145,190,.10);
+    }
+
+    .primary-btn:hover,
+    .ghost-btn:hover,
+    .day-tab:hover {
+      transform: translateY(-2px);
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(320px, 370px);
+      gap: 22px;
+      align-items: start;
+    }
+
+    .left-stack,
+    .right-stack {
+      display: grid;
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .overview-card,
+    .budget-card,
+    .map-card,
+    .version-card,
+    .day-detail-card {
+      padding: 24px;
+    }
+
+    .panel-title {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .title-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .water-dot {
+      width: 14px;
+      height: 22px;
+      border-radius: 50% 50% 50% 12px;
+      transform: rotate(28deg);
+      background: linear-gradient(135deg, var(--cyan), var(--blue));
+      box-shadow: 0 0 0 7px rgba(85,184,255,.1);
+      flex: 0 0 auto;
+    }
+
+    .panel-title h3 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .panel-link {
+      color: #267db0;
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .overview-list {
+      display: grid;
+      gap: 14px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .overview-list li {
+      display: grid;
+      grid-template-columns: minmax(82px, .72fr) minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(74,159,218,.14);
+    }
+
+    .overview-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+    .overview-list span { color: var(--faint); font-size: 12px; font-weight: 850; }
+    .overview-list strong { justify-self: end; font-size: 14px; text-align: right; }
+
+    .tag-row {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .soft-pill {
+      padding: 7px 10px;
+      color: #2474a5;
+      background: rgba(221,246,255,.86);
+    }
+
+    .action-stack {
+      display: grid;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .action-stack .primary-btn,
+    .action-stack .ghost-btn {
+      width: 100%;
+      min-height: 52px;
+    }
+
+    .day-detail-card {
+      min-height: 716px;
+    }
+
+    .day-switcher {
+      display: flex;
+      gap: 8px;
+      padding: 6px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.48);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.72);
+    }
+
+    .day-tab {
+      min-width: 78px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+
+    .day-tab.active {
+      color: #0f5e8e;
+      background: rgba(255,255,255,.94);
+      box-shadow: 0 10px 24px rgba(66,158,216,.14);
+    }
+
+    .day-summary {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      align-items: start;
+      margin-bottom: 18px;
+      padding: 20px 22px;
+      border: 1px solid rgba(255,255,255,.7);
+      border-radius: 24px;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.9) 0%, rgba(238,249,255,.78) 55%, rgba(210,239,255,.5) 100%),
+        radial-gradient(circle at 86% 28%, rgba(85,184,255,.22), transparent 32%);
+      box-shadow:
+        0 22px 58px rgba(63,140,190,.14),
+        inset 0 1px 0 rgba(255,255,255,.9);
+      overflow: hidden;
+    }
+
+    .day-summary.has-cover {
+      min-height: 234px;
+      align-content: center;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.92) 0%, rgba(239,249,255,.8) 45%, rgba(210,239,255,.34) 100%),
+        radial-gradient(circle at 86% 28%, rgba(85,184,255,.22), transparent 32%);
+    }
+
+    .day-summary.has-cover::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(90deg, rgba(255,255,255,.96) 0%, rgba(255,255,255,.82) 38%, rgba(255,255,255,.2) 72%, rgba(255,255,255,.04) 100%),
+        linear-gradient(180deg, rgba(228,247,255,.16), rgba(60,154,208,.16)),
+        var(--summary-image);
+      background-size: cover;
+      background-position: center;
+      transform: scale(1.01);
+      pointer-events: none;
+    }
+
+    .day-summary::after {
+      content: "";
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: min(38%, 340px);
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.58), rgba(255,255,255,0)),
+        linear-gradient(135deg, rgba(85,184,255,.12), rgba(102,214,161,.1));
+      pointer-events: none;
+    }
+
+    .day-summary > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .day-summary h4 {
+      margin: 0 0 8px;
+      color: #0b2b5f;
+      font-size: clamp(22px, 2.2vw, 28px);
+      line-height: 1.25;
+      letter-spacing: 0;
+      word-break: keep-all;
+    }
+
+    .day-summary p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 750;
+      line-height: 1.6;
+    }
+
+    .weather-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .weather-icon,
+    .timeline-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+
+    .weather-icon {
+      width: 26px;
+      height: 26px;
+      color: #3c8ed8;
+      filter: drop-shadow(0 6px 12px rgba(49,137,211,.18));
+    }
+
+    .weather-icon svg,
+    .timeline-icon svg {
+      width: 100%;
+      height: 100%;
+      stroke: currentColor;
+    }
+
+    .metric-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      gap: 10px;
+    }
+
+    .metric-box {
+      min-width: 104px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255,255,255,.76);
+      border-radius: 16px;
+      background: rgba(255,255,255,.82);
+      backdrop-filter: blur(14px) saturate(132%);
+      -webkit-backdrop-filter: blur(14px) saturate(132%);
+      text-align: center;
+      color: #0b2b5f;
+      font-size: 18px;
+      font-weight: 850;
+      box-shadow: 0 16px 36px rgba(63,140,190,.12);
+    }
+
+    .metric-box span {
+      display: block;
+      margin-top: 4px;
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      gap: 12px;
+      padding: 0 4px;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 92px;
+      top: 30px;
+      bottom: 30px;
+      width: 2px;
+      border-radius: var(--radius-pill);
+      background: linear-gradient(180deg, rgba(85,184,255,.16), rgba(85,184,255,.86), rgba(85,184,255,.18));
+    }
+
+    .activity {
+      position: relative;
+      display: grid;
+      grid-template-columns: 76px 28px minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+      min-height: 126px;
+      padding: 0;
+      animation: cardSurface .58s cubic-bezier(.16,1,.3,1) both;
+    }
+
+    .activity.meal {
+      background: transparent;
+    }
+
+    .activity.transit {
+      grid-template-columns: 76px 28px minmax(0, 1fr);
+      min-height: 82px;
+      padding: 0;
+      background: transparent;
+    }
+
+    .activity-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 168px;
+      gap: 18px;
+      align-items: center;
+      min-height: 126px;
+      padding: 18px 16px 18px 26px;
+      border: 1px solid rgba(207,233,251,.82);
+      border-radius: 18px;
+      background: rgba(255,255,255,.78);
+      box-shadow: 0 14px 38px rgba(63,140,190,.1), inset 0 1px 0 rgba(255,255,255,.86);
+    }
+
+    .activity.transit .activity-card {
+      display: block;
+      min-height: 82px;
+      padding: 16px 22px;
+      background: rgba(246,252,255,.76);
+    }
+
+    .activity.meal .activity-card {
+      border-color: rgba(255,196,107,.4);
+      background: linear-gradient(90deg, rgba(255,252,247,.88), rgba(255,248,235,.72));
+    }
+
+    .activity.transit .point {
+      width: 30px;
+      height: 30px;
+      border-width: 2px;
+      background: rgba(255,255,255,.94);
+      color: #4c9df0;
+      box-shadow: 0 0 0 5px rgba(85,184,255,.1), 0 10px 24px rgba(63,140,190,.18);
+    }
+
+    .activity.transit .activity-copy {
+      display: grid;
+      gap: 5px;
+    }
+
+    .activity.transit h5 {
+      margin: 0;
+      color: #255a78;
+      font-size: 13px;
+    }
+
+    .activity.transit p {
+      color: #5a8198;
+      font-weight: 750;
+    }
+
+    .time {
+      color: #4f7389;
+      font-size: 17px;
+      font-weight: 900;
+    }
+
+    .point {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      justify-self: center;
+      width: 14px;
+      height: 14px;
+      border: 4px solid rgba(255,255,255,.92);
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 5px rgba(85,184,255,.14);
+    }
+
+    .activity.meal .point {
+      width: 30px;
+      height: 30px;
+      border-width: 2px;
+      background: rgba(255,250,240,.96);
+      color: #f2a23a;
+      box-shadow: 0 0 0 5px rgba(255,196,107,.16), 0 10px 24px rgba(204,128,28,.16);
+    }
+
+    .timeline-icon {
+      width: 16px;
+      height: 16px;
+    }
+
+    .activity.meal h5 {
+      color: #8e4d16;
+    }
+
+    .activity-copy h5 {
+      margin: 0 0 8px;
+      color: #153752;
+      font-size: 19px;
+      letter-spacing: 0;
+    }
+
+    .activity-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 750;
+      line-height: 1.65;
+    }
+
+    .activity-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .activity.meal .soft-pill,
+    .travel-line .soft-pill {
+      color: #9b5b18;
+      background: rgba(255,232,198,.78);
+    }
+
+    .activity.meal .travel-line {
+      color: #8b5a24;
+      background: rgba(255,239,216,.72);
+    }
+
+    .activity.meal .travel-badge {
+      color: #a75d14;
+      background: rgba(255,255,255,.72);
+    }
+
+    .activity.meal .travel-nav {
+      color: #8b5a24;
+    }
+
+    .travel-lines {
+      grid-column: 1 / -1;
+      position: relative;
+      display: grid;
+      gap: 7px;
+      margin-top: -2px;
+    }
+
+    .travel-line {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 9px;
+      min-height: 34px;
+      padding: 8px 12px;
+      border-radius: 14px;
+      color: #4f7389;
+      background: rgba(229,246,255,.7);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .travel-badge {
+      flex: 0 0 auto;
+      padding: 3px 8px;
+      border-radius: var(--radius-pill);
+      color: #1374ae;
+      background: rgba(255,255,255,.78);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.86);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .travel-meta {
+      min-width: min(100%, 170px);
+      color: #255a78;
+    }
+
+    .travel-nav {
+      flex: 1 1 240px;
+      color: #5a8198;
+      line-height: 1.45;
+    }
+
+    .spot-art {
+      position: relative;
+      height: 104px;
+      border-radius: 15px;
+      overflow: hidden;
+      background: rgba(232,248,255,.66);
+      background-position: center;
+      background-size: cover;
+      border: 1px dashed rgba(85,184,255,.22);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.82);
+    }
+
+    .spot-art.has-image {
+      border: 1px solid rgba(255,255,255,.82);
+      box-shadow: 0 16px 34px rgba(63,140,190,.16), inset 0 1px 0 rgba(255,255,255,.22);
+    }
+
+    .spot-art::before {
+      content: none;
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(115deg, transparent 0 28%, rgba(255,255,255,.42) 29% 32%, transparent 33%),
+        radial-gradient(circle at 24% 28%, rgba(255,255,255,.7), transparent 11%);
+    }
+
+    .spot-art::after { content: none; }
+
+    .budget-total {
+      margin-bottom: 18px;
+    }
+
+    .budget-total strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+
+    .budget-total span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .budget-list {
+      display: grid;
+      gap: 15px;
+    }
+
+    .budget-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 11px;
+      align-items: center;
+    }
+
+    .budget-icon {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: rgba(232,248,255,.84);
+    }
+
+    .budget-meta {
+      min-width: 0;
+    }
+
+    .budget-line {
+      height: 7px;
+      margin-top: 8px;
+      border-radius: var(--radius-pill);
+      background: rgba(201,230,248,.72);
+      overflow: hidden;
+    }
+
+    .budget-line i {
+      display: block;
+      height: 100%;
+      width: var(--w);
+      border-radius: inherit;
+      background: var(--c);
+    }
+
+    .budget-name {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .budget-note {
+      margin-top: 6px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .budget-value {
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .map-visual {
+      position: relative;
+      height: 196px;
+      border: 1px solid rgba(78,168,230,.2);
+      border-radius: 24px;
+      overflow: hidden;
+      background:
+        linear-gradient(28deg, transparent 0 18%, rgba(255,255,255,.5) 19% 21%, transparent 22%),
+        linear-gradient(128deg, transparent 0 28%, rgba(255,201,124,.46) 29% 31%, transparent 32%),
+        linear-gradient(82deg, transparent 0 54%, rgba(74,177,226,.32) 55% 58%, transparent 59%),
+        linear-gradient(rgba(137,199,217,.22) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(137,199,217,.22) 1px, transparent 1px),
+        #eefbff;
+      background-size: auto, auto, auto, 44px 44px, 44px 44px, auto;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.78);
+    }
+
+    .route-path {
+      position: absolute;
+      inset: 26px 32px 34px;
+    }
+
+    .map-pin {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 3px solid rgba(255,255,255,.94);
+      border-radius: 50%;
+      color: #fff;
+      background: var(--deep-blue);
+      box-shadow: 0 8px 18px rgba(35,118,165,.22);
+      font-size: 11px;
+      font-weight: 900;
+      transform: translate(-50%, -50%);
+    }
+
+    .map-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .map-stat {
+      min-height: 58px;
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      background: rgba(255,255,255,.62);
+      text-align: center;
+      font-weight: 900;
+    }
+
+    .map-stat span {
+      display: block;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .version-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .version-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 54px;
+      padding: 10px;
+      border: 1px solid rgba(74,159,218,.12);
+      border-radius: 17px;
+      background: rgba(255,255,255,.58);
+    }
+
+    .version-badge {
+      min-width: 36px;
+      padding: 7px 9px;
+      border-radius: 12px;
+      color: #257cc0;
+      background: rgba(221,246,255,.9);
+      font-size: 12px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .version-copy strong {
+      display: block;
+      font-size: 12px;
+    }
+
+    .version-copy span {
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .current-mark {
+      padding: 5px 8px;
+      border-radius: var(--radius-pill);
+      color: #159264;
+      background: rgba(213,250,232,.86);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 40;
+      padding: 14px 18px;
+      border-radius: 22px;
+      color: #15577e;
+      background: rgba(255,255,255,.84);
+      box-shadow: 0 24px 60px rgba(63,140,190,.22);
+      backdrop-filter: blur(18px);
+      transform: translateY(24px);
+      opacity: 0;
+      transition: .28s ease;
+      font-weight: 850;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    @media (max-width: 1180px) {
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .left-stack,
+      .right-stack {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        width: min(100vw - 24px, 1420px);
+        padding-top: 14px;
+      }
+
+      .water-nav {
+        align-items: stretch;
+        border-radius: 30px;
+        flex-direction: column;
+      }
+
+      .nav-tabs {
+        overflow-x: auto;
+      }
+
+      .nav-actions {
+        position: absolute;
+        right: 14px;
+        top: 12px;
+      }
+
+      .hero-card,
+      .day-summary,
+      .activity {
+        grid-template-columns: 1fr;
+      }
+
+      .activity.transit {
+        grid-template-columns: 1fr;
+      }
+
+      .activity-card {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-actions,
+      .metric-row {
+        justify-content: flex-start;
+      }
+
+      .hero-card {
+        padding: 24px 18px;
+      }
+
+      .hero-card h2 {
+        font-size: 36px;
+      }
+
+      .left-stack,
+      .right-stack {
+        grid-template-columns: 1fr;
+      }
+
+      .panel-title {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .day-switcher {
+        overflow-x: auto;
+      }
+
+      .timeline::before {
+        left: 25px;
+      }
+
+      .activity {
+        padding-left: 16px;
+      }
+
+      .point {
+        position: absolute;
+        left: 18px;
+        top: 23px;
+      }
+
+      .time,
+      .activity-card,
+      .travel-lines {
+        margin-left: 34px;
+      }
+
+      .travel-lines {
+        grid-column: auto;
+      }
+
+      .spot-art {
+        height: 116px;
+      }
+
+      .map-stats {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="water-nav" aria-label="用户工作台导航">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">✈️</span>
+        <span>
+          <h1>FloatTrip</h1>
+          <span>用户工作台 · 行程详情</span>
+        </span>
+      </a>
+      <div class="nav-tabs">
+        <a href="index.html">规划</a>
+        <a class="active" href="itinerary-detail.html">行程详情</a>
+        <a href="#routeMap">路线摘要</a>
+        <a href="indexv1.html">官网首页</a>
+      </div>
+      <div class="nav-actions" aria-label="页面工具">
+        <button class="icon-btn" type="button" aria-label="切换主题">☼</button>
+        <button class="icon-btn" type="button" aria-label="用户中心">F</button>
+      </div>
+    </nav>
+
+    <header class="hero-card">
+      <div>
+        <span class="status-line">已生成 · Mock 数据</span>
+        <h2><span class="shine">南京 3 日美食与历史文化行程</span></h2>
+        <div class="meta-row">
+          <span class="meta-pill">📅 2026/06/10 - 2026/06/12</span>
+          <span class="meta-pill">📍 出发地：上海</span>
+          <span class="meta-pill">🕒 3 天 2 晚</span>
+          <span class="meta-pill">💰 总预算：¥3,000 / 人</span>
+          <span class="meta-pill">🍜 美食探索</span>
+          <span class="meta-pill">🏛️ 历史文化</span>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <a class="ghost-btn" href="index.html">返回规划页</a>
+        <button class="primary-btn" type="button" id="editTrip">编辑行程</button>
+      </div>
+    </header>
+
+    <main class="detail-grid">
+      <aside class="left-stack">
+        <section class="glass-card overview-card" aria-labelledby="overviewTitle">
+          <div class="panel-title">
+            <div class="title-left">
+              <i class="water-dot" aria-hidden="true"></i>
+              <h3 id="overviewTitle">行程概览</h3>
+            </div>
+          </div>
+          <ul class="overview-list">
+            <li><span>目的地</span><strong>南京，中国</strong></li>
+            <li><span>旅行日期</span><strong>2026/06/10 - 2026/06/12</strong></li>
+            <li><span>总天数</span><strong>3 天 2 晚</strong></li>
+            <li><span>总预算</span><strong>¥3,000 / 人</strong></li>
+            <li><span>旅行节奏</span><strong>轻松休闲 · 舒适</strong></li>
+            <li>
+              <span>偏好标签</span>
+              <div class="tag-row">
+                <span class="soft-pill">美食</span>
+                <span class="soft-pill">文化历史</span>
+                <span class="soft-pill">城市漫步</span>
+                <span class="soft-pill">少走路</span>
+              </div>
+            </li>
+            <li><span>住宿区域</span><strong>秦淮区 / 玄武区</strong></li>
+            <li><span>出行人数</span><strong>2 人</strong></li>
+          </ul>
+          <div class="action-stack">
+            <button class="primary-btn" type="button" id="regenerate">再次生成</button>
+            <button class="ghost-btn" type="button" id="exportPdf">导出 PDF</button>
+            <button class="ghost-btn" type="button" id="shareTrip">分享行程</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="glass-card day-detail-card" aria-labelledby="dayTitle">
+        <div class="panel-title">
+          <div class="title-left">
+            <i class="water-dot" aria-hidden="true"></i>
+            <h3 id="dayTitle">每日行程详情</h3>
+          </div>
+          <div class="day-switcher" aria-label="切换每日详情" id="daySwitcher"></div>
+        </div>
+
+        <div class="day-summary" id="daySummary"></div>
+        <div class="timeline" id="timeline"></div>
+      </section>
+
+      <aside class="right-stack">
+        <section class="glass-card budget-card" aria-labelledby="budgetTitle">
+          <div class="panel-title">
+            <div class="title-left">
+              <i class="water-dot" aria-hidden="true"></i>
+              <h3 id="budgetTitle">预算拆分</h3>
+            </div>
+            <a class="panel-link" href="#budgetTitle">查看明细 ›</a>
+          </div>
+          <div class="budget-total">
+            <strong>¥3,000</strong>
+            <span>单人预估总预算，当前为前端 mock</span>
+          </div>
+          <div class="budget-list" id="budgetList"></div>
+        </section>
+
+        <section class="glass-card map-card" id="routeMap" aria-labelledby="mapTitle">
+          <div class="panel-title">
+            <div class="title-left">
+              <i class="water-dot" aria-hidden="true"></i>
+              <h3 id="mapTitle">当日路线摘要</h3>
+            </div>
+            <button class="panel-link" type="button" id="focusMap">查看地图 ›</button>
+          </div>
+          <div class="map-visual" aria-label="模拟路线地图">
+            <svg class="route-path" viewBox="0 0 270 135" role="img" aria-label="Day 1 模拟路线">
+              <path d="M18 32 C70 10, 78 78, 126 56 S192 42, 246 96" fill="none" stroke="rgba(47,159,232,.28)" stroke-width="12" stroke-linecap="round" />
+              <path d="M18 32 C70 10, 78 78, 126 56 S192 42, 246 96" fill="none" stroke="#2f9fe8" stroke-width="5" stroke-linecap="round" stroke-dasharray="7 9" />
+            </svg>
+            <span class="map-pin" style="left: 13%; top: 32%;">1</span>
+            <span class="map-pin" style="left: 36%; top: 53%;">2</span>
+            <span class="map-pin" style="left: 52%; top: 43%;">3</span>
+            <span class="map-pin" style="left: 73%; top: 43%;">4</span>
+            <span class="map-pin" style="left: 89%; top: 70%;">5</span>
+          </div>
+          <div class="map-stats" id="mapStats"></div>
+        </section>
+
+        <section class="glass-card version-card" aria-labelledby="versionTitle">
+          <div class="panel-title">
+            <div class="title-left">
+              <i class="water-dot" aria-hidden="true"></i>
+              <h3 id="versionTitle">版本记录</h3>
+            </div>
+            <a class="panel-link" href="#versionTitle">查看全部 ›</a>
+          </div>
+          <div class="version-list">
+            <div class="version-item">
+              <span class="version-badge">v2</span>
+              <span class="version-copy">
+                <strong>2026/05/24 22:30</strong>
+                <span>自动生成（优化景点顺序与餐饮推荐）</span>
+              </span>
+              <span class="current-mark">当前</span>
+            </div>
+            <div class="version-item">
+              <span class="version-badge">v1</span>
+              <span class="version-copy">
+                <strong>2026/05/24 22:10</strong>
+                <span>首次生成</span>
+              </span>
+              <span class="panel-link">›</span>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div class="toast" id="toast">已完成</div>
+
+  <script type="module">
+    const daySwitcher = document.getElementById("daySwitcher");
+    const daySummary = document.getElementById("daySummary");
+    const timeline = document.getElementById("timeline");
+    const budgetList = document.getElementById("budgetList");
+    const mapStats = document.getElementById("mapStats");
+    const toast = document.getElementById("toast");
+    const overviewList = document.querySelector(".overview-list");
+    const heroTitle = document.querySelector(".hero-card h2 .shine");
+    const statusLine = document.querySelector(".status-line");
+    const metaRow = document.querySelector(".meta-row");
+    const noticeList = document.querySelector(".version-list");
+    const budgetTitle = document.getElementById("budgetTitle");
+    const versionTitle = document.getElementById("versionTitle");
+    const budgetTotal = document.querySelector(".budget-total");
+    const mapVisual = document.querySelector(".map-visual");
+    const urlParams = new URLSearchParams(window.location.search);
+    const apiBase = urlParams.get("api") || import.meta.env.VITE_FLOATTRIP_API_BASE || "http://127.0.0.1:8020";
+    let routePlan = null;
+    let originalRequest = null;
+    let activeDay = 0;
+
+    /**
+     * 功能：展示轻量提示。
+     * 参数：message，字符串，表示要展示的提示文本。
+     * 返回值：无返回值，直接更新页面提示组件。
+     */
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    /**
+     * 功能：渲染顶部每日切换按钮。
+     * 参数：无，读取当前后端行程数据。
+     * 返回值：无返回值，直接写入 daySwitcher 容器。
+     */
+    function renderDaySwitcher() {
+      const days = routePlan?.days || [];
+      daySwitcher.innerHTML = days.map((day, index) => (
+        `<button class="day-tab${index === activeDay ? " active" : ""}" type="button" data-day="${index}">Day ${day.day_index}</button>`
+      )).join("");
+      daySwitcher.querySelectorAll(".day-tab").forEach((button) => {
+        button.addEventListener("click", () => renderDay(Number(button.dataset.day)));
+      });
+    }
+
+    /**
+     * 功能：渲染当前日午餐和晚餐推荐。
+     * 参数：meals，后端返回的餐厅推荐数组。
+     * 返回值：无返回值，直接写入 budgetList 容器。
+     */
+    function renderMeals(meals) {
+      budgetTitle.textContent = "餐饮推荐";
+      const sourceText = meals.some((item) => item.source_poi?.provider === "amap")
+        ? "来自高德周边搜索，按当日路线就近安排"
+        : "来自高德 MCP 周边搜索，按当日路线就近安排";
+      budgetTotal.innerHTML = `<strong>${meals.length || 0} 处</strong><span>${sourceText}</span>`;
+      budgetList.innerHTML = (meals.length ? meals : [{ restaurant_name: "暂无餐厅推荐", meal_type: "meal", reason: "详情生成暂未返回餐饮结果。" }]).map((item) => `
+        <div class="budget-row">
+          <span class="budget-icon">${item.meal_type === "dinner" ? "晚" : "午"}</span>
+          <div class="budget-meta">
+            <div class="budget-name"><span>${item.restaurant_name}</span><span>${item.distance_meters ? `${item.distance_meters}m` : "就近"}</span></div>
+            <div class="budget-line"><i style="--w: 72%; --c: linear-gradient(90deg, #66d6a1, #55c9ce);"></i></div>
+            <div class="budget-note">${item.address || item.reason || "按当天路线就近安排"}</div>
+          </div>
+          <strong class="budget-value">${item.meal_type === "dinner" ? "晚餐" : "午餐"}</strong>
+        </div>
+      `).join("");
+    }
+
+    /**
+     * 功能：渲染当前日注意事项。
+     * 参数：notices，后端返回的注意事项数组。
+     * 返回值：无返回值，直接写入右侧卡片。
+     */
+    function renderNotices(notices) {
+      versionTitle.textContent = "注意事项";
+      noticeList.innerHTML = (notices.length ? notices : [{ title: "暂无提醒", content: "当前日程没有额外注意事项。", level: "info" }]).map((notice) => `
+        <div class="version-item">
+          <span class="version-badge">${notice.level === "warning" ? "!" : "i"}</span>
+          <span class="version-copy">
+            <strong>${notice.title}</strong>
+            <span>${notice.content}</span>
+          </span>
+          <span class="current-mark">${notice.basis || "info"}</span>
+        </div>
+      `).join("");
+    }
+
+    /**
+     * 功能：渲染指定天数的行程摘要、地图指标和时间线。
+     * 参数：index，数字，表示 routePlan.days 中的天数下标。
+     * 返回值：无返回值，直接更新页面中的每日详情。
+     */
+    function renderDay(index) {
+      const days = routePlan?.days || [];
+      if (!days.length) {
+        renderEmptyState();
+        return;
+      }
+      activeDay = Math.min(Math.max(index, 0), days.length - 1);
+      const day = days[activeDay];
+      const detail = day.itinerary_detail || {};
+      const activities = detail.activities || [];
+      const weather = detail.weather || {};
+      const meals = detail.meals || [];
+      const notices = detail.notices || [];
+      const heroImage = dayHeroImage(day, detail);
+      mapVisual.style.display = "";
+      renderDaySwitcher();
+      daySummary.classList.toggle("has-cover", Boolean(heroImage?.url));
+      daySummary.style.setProperty("--summary-image", heroImage?.url ? `url('${cssUrl(heroImage.url)}')` : "none");
+      const weatherText = weather.status === "ok"
+        ? `${weather.weather || "天气"} · ${weather.temperature || "温度待确认"} · ${weather.dressing_advice || ""}`
+        : (weather.dressing_advice || "天气暂不可用，建议临近出行前确认。");
+      daySummary.innerHTML = `
+        <div>
+          <h4>Day ${day.day_index} · ${detail.day_theme || day.route_order.join(" / ")}</h4>
+          <p class="weather-line">${weatherIcon(weather.weather || weather.status)}<span>${weatherText}</span></p>
+        </div>
+        <div class="metric-row">
+          <span class="metric-box">${day.summary_metrics.spot_count} 个景点<span>路线</span></span>
+          <span class="metric-box">${day.summary_metrics.total_duration_minutes || 0} 分钟<span>交通</span></span>
+          <span class="metric-box">${weather.date || "日期待定"}<span>天气日期</span></span>
+        </div>
+      `;
+      const displayActivities = activities.length ? activities : fallbackActivities(day);
+      mapStats.innerHTML = [
+        `${displayActivities.length} 活动`,
+        `${day.route_segments.length} 路段`,
+        weather.weather || "天气待定"
+      ].map((stat) => `<span class="map-stat">${stat}<span>Day ${day.day_index}</span></span>`).join("");
+      timeline.innerHTML = displayActivities.map((activity, index) => renderActivity(activity, index)).join("");
+      renderMeals(meals);
+      renderNotices(notices);
+    }
+
+    function dayHeroImage(day, detail) {
+      if (detail?.hero_image_url) {
+        return {
+          url: detail.hero_image_url,
+          description: detail.hero_image_description,
+          photographer: detail.hero_image_photographer
+        };
+      }
+      const fallbackSpot = (day?.spots || []).find((spot) => spot.image_url);
+      if (!fallbackSpot) return null;
+      return {
+        url: fallbackSpot.image_url,
+        description: fallbackSpot.image_description,
+        photographer: fallbackSpot.image_photographer
+      };
+    }
+
+    function renderActivity(activity, index) {
+      if (activity.type === "transit" || activity.type === "buffer") {
+        return renderTransitActivity(activity, index);
+      }
+      const image = imageForActivity(activity);
+      return `
+        <article class="activity${activity.type === "meal" ? " meal" : ""}" style="animation-delay: ${index * 70}ms;">
+          <span class="time">${activity.start_time}</span>
+          <i class="point" aria-hidden="true">${activity.type === "meal" ? mealIcon() : ""}</i>
+          <div class="activity-card">
+            <div class="activity-copy">
+              <h5>${activity.start_time} - ${activity.end_time} · ${activity.title}</h5>
+              <p>${activity.description}</p>
+              ${renderTagPills(activity.tag || activity.type)}
+            </div>
+            ${renderActivityArt(activity, index, image)}
+            ${renderTravelLines(activity)}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderTransitActivity(activity, index) {
+      const duration = commuteDurationText(activity);
+      return `
+        <article class="activity transit" style="animation-delay: ${index * 70}ms;">
+          <span class="time">${activity.start_time}</span>
+          <i class="point" aria-hidden="true">${transitIcon()}</i>
+          <div class="activity-card">
+            <div class="activity-copy">
+              <h5>${activity.start_time} - ${activity.end_time}${duration ? ` · ${duration}` : ""} · ${activity.title}</h5>
+              <p>${activity.travel_summary || activity.description || "导航信息待补全"} ${renderInlinePill(activity.tag || "交通衔接")}</p>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    function weatherIcon(weatherText) {
+      const text = String(weatherText || "");
+      if (/[雨雷]/.test(text)) {
+        return `<span class="weather-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 18a4.5 4.5 0 0 0 .2-9 6.3 6.3 0 0 0-12.1 1.8A3.7 3.7 0 0 0 6 18h11.5Z"/><path d="M8 20.5v.2"/><path d="M12 20.5v.2"/><path d="M16 20.5v.2"/></svg></span>`;
+      }
+      if (/雪/.test(text)) {
+        return `<span class="weather-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 18a4.5 4.5 0 0 0 .2-9 6.3 6.3 0 0 0-12.1 1.8A3.7 3.7 0 0 0 6 18h11.5Z"/><path d="M10 20.5h.01"/><path d="M14 20.5h.01"/></svg></span>`;
+      }
+      if (/晴/.test(text)) {
+        return `<span class="weather-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.8v2"/><path d="M12 19.2v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2.8 12h2"/><path d="M19.2 12h2"/><path d="m4.9 19.1 1.4-1.4"/><path d="m17.7 6.3 1.4-1.4"/></svg></span>`;
+      }
+      return `<span class="weather-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 18a4.5 4.5 0 0 0 .2-9 6.3 6.3 0 0 0-12.1 1.8A3.7 3.7 0 0 0 6 18h11.5Z"/></svg></span>`;
+    }
+
+    function transitIcon() {
+      return `<span class="timeline-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="12" height="14" rx="3"/><path d="M8.5 8h7"/><path d="M8.5 12h7"/><path d="M9 20h.01"/><path d="M15 20h.01"/></svg></span>`;
+    }
+
+    function mealIcon() {
+      return `<span class="timeline-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="M10 3v8"/><path d="M7 7h3"/><path d="M8.5 11v10"/><path d="M16 3v18"/><path d="M16 3c2.1 1.4 3 3.1 3 5.1 0 1.8-.8 3.4-3 4.5"/></svg></span>`;
+    }
+
+    function renderTravelLines(activity) {
+      const lines = [];
+      if (activity.type === "meal" && activity.travel_summary) {
+        lines.push(`<div class="travel-line"><span class="travel-badge">位置</span><span class="travel-nav">${activity.travel_summary}</span></div>`);
+      }
+      return lines.length ? `<div class="travel-lines">${lines.join("")}</div>` : "";
+    }
+
+    function renderTagPills(tagText) {
+      const tags = String(tagText || "")
+        .split(/[;；,，、]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .slice(0, 4);
+      return tags.length ? `<div class="activity-tags">${tags.map(renderInlinePill).join("")}</div>` : "";
+    }
+
+    function renderActivityArt(activity, index, image) {
+      if (!image?.url) {
+        return `<div class="spot-art" style="background: ${artForActivity(activity, index)};" aria-label="${activity.title} 图片占位"></div>`;
+      }
+      return `
+        <div
+          class="spot-art has-image"
+          style="background-image: url('${cssUrl(image.url)}');"
+          aria-label="${escapeAttr(image.description || `${activity.title} 景点图片`)}"
+        ></div>
+      `;
+    }
+
+    function imageForActivity(activity) {
+      if (activity.type !== "spot") return null;
+      const day = routePlan?.days?.[activeDay];
+      const spots = day?.spots || [];
+      const matchedSpot = spots.find((spot) => spot.spot_id === activity.related_spot_id)
+        || spots.find((spot) => spot.name === activity.title);
+      if (!matchedSpot?.image_url) return null;
+      return {
+        url: matchedSpot.image_url,
+        description: matchedSpot.image_description,
+        photographer: matchedSpot.image_photographer
+      };
+    }
+
+    function renderInlinePill(text) {
+      return `<span class="soft-pill">${text}</span>`;
+    }
+
+    function escapeAttr(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function cssUrl(value) {
+      return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    }
+
+    function commuteDurationText(activity) {
+      const start = timeToMinutes(activity.start_time);
+      const end = timeToMinutes(activity.end_time);
+      if (start === null || end === null || end <= start) return "";
+      return `${end - start} 分钟`;
+    }
+
+    function timeToMinutes(value) {
+      const match = /^(\d{1,2}):(\d{2})$/.exec(value || "");
+      if (!match) return null;
+      return Number(match[1]) * 60 + Number(match[2]);
+    }
+
+    function fallbackActivities(day) {
+      return day.spots.map((spot, index) => ({
+        type: "spot",
+        start_time: `${String(9 + index).padStart(2, "0")}:00`,
+        end_time: `${String(10 + index).padStart(2, "0")}:00`,
+        title: spot.name,
+        description: "当前缓存中还没有日程详情，先展示原始景点路线。",
+        related_spot_id: spot.spot_id,
+        tag: spot.poi_type || "景点",
+        travel_summary: "详情待生成"
+      }));
+    }
+
+    function artForActivity(activity, index) {
+      if (activity.type === "meal") return "linear-gradient(135deg, #48c6a8, #ffc985 50%, #9d5d4a)";
+      const arts = [
+        "linear-gradient(135deg, #2f9fe8, #9bc9ff 48%, #244a6a)",
+        "linear-gradient(135deg, #6b82ff, #b9d5ff 45%, #4c5f86)",
+        "linear-gradient(135deg, #34b6e8, #97e7f5 48%, #315f85)",
+        "linear-gradient(135deg, #49a9e8, #b7e5d9 45%, #446d64)"
+      ];
+      return arts[index % arts.length];
+    }
+
+    function renderTripShell() {
+      const days = routePlan?.days || [];
+      const startDate = originalRequest?.start_date || routePlan?.days?.[0]?.itinerary_detail?.weather?.date || "日期待定";
+      const endDate = originalRequest?.start_date && days.length
+        ? addDays(originalRequest.start_date, days.length - 1)
+        : "日期待定";
+      statusLine.textContent = "已生成 · 后端日程详情";
+      heroTitle.textContent = `${routePlan.destination} ${days.length} 日行程详情`;
+      metaRow.innerHTML = [
+        `📅 ${startDate} - ${endDate}`,
+        `📍 目的地：${routePlan.destination}`,
+        `🕒 ${days.length} 天`,
+        ...(originalRequest?.preferences || []).map((item) => `🏷️ ${item}`)
+      ].map((item) => `<span class="meta-pill">${item}</span>`).join("");
+      overviewList.innerHTML = `
+        <li><span>目的地</span><strong>${routePlan.destination}</strong></li>
+        <li><span>旅行日期</span><strong>${startDate} - ${endDate}</strong></li>
+        <li><span>总天数</span><strong>${days.length} 天</strong></li>
+        <li><span>旅行节奏</span><strong>${originalRequest?.pace || "舒适"}</strong></li>
+        <li><span>偏好标签</span><div class="tag-row">${(originalRequest?.preferences || []).map((item) => `<span class="soft-pill">${item}</span>`).join("") || "<span class=\"soft-pill\">无明确偏好</span>"}</div></li>
+        <li><span>路线模式</span><strong>${routePlan.route_mode}</strong></li>
+      `;
+    }
+
+    function addDays(value, offset) {
+      const date = new Date(`${value}T00:00:00`);
+      date.setDate(date.getDate() + offset);
+      return date.toISOString().slice(0, 10);
+    }
+
+    function renderEmptyState() {
+      statusLine.textContent = "未找到规划结果";
+      heroTitle.textContent = "请先从规划页生成行程";
+      metaRow.innerHTML = `<span class="meta-pill">暂无缓存</span>`;
+      overviewList.innerHTML = `
+        <li><span>状态</span><strong>暂无可展示的行程</strong></li>
+        <li><span>下一步</span><strong>返回规划页生成完整路线</strong></li>
+      `;
+      daySwitcher.innerHTML = "";
+      daySummary.classList.remove("has-cover");
+      daySummary.style.setProperty("--summary-image", "none");
+      daySummary.innerHTML = "<p>当前页面没有读取到路线缓存。</p>";
+      timeline.innerHTML = `<article class="activity"><span class="time">--:--</span><i class="point" aria-hidden="true"></i><div class="activity-copy"><h5>暂无行程详情</h5><p>请返回规划页完成一次完整规划。</p></div></article>`;
+      mapVisual.style.display = "none";
+      mapStats.innerHTML = "";
+      budgetTitle.textContent = "餐饮推荐";
+      budgetTotal.innerHTML = `<strong>0 处</strong><span>生成路线后会展示午餐和晚餐推荐</span>`;
+      budgetList.innerHTML = "";
+      versionTitle.textContent = "注意事项";
+      noticeList.innerHTML = "";
+    }
+
+    async function loadRoutePlan() {
+      const cachedPlan = sessionStorage.getItem("floattrip.routePlan");
+      const cachedRequest = sessionStorage.getItem("floattrip.originalRequest");
+      if (!cachedPlan) {
+        renderEmptyState();
+        return;
+      }
+      routePlan = JSON.parse(cachedPlan);
+      originalRequest = cachedRequest ? JSON.parse(cachedRequest) : {
+        destination: routePlan.destination,
+        days: routePlan.days?.length || 1,
+        preferences: [],
+        start_date: null
+      };
+      renderTripShell();
+      if (routePlanNeedsDetails(routePlan)) {
+        showToast("正在补全每日行程详情");
+        await fetchItineraryDetails();
+      }
+      renderTripShell();
+      renderDay(0);
+    }
+
+    function routePlanNeedsDetails(plan) {
+      const days = plan?.days || [];
+      if (!days.length) return false;
+      return days.some(
+        (day) => !day.itinerary_detail
+          || !day.itinerary_detail.hero_image_url
+          || (day.spots || []).some((spot) => !spot.image_url)
+      );
+    }
+
+    async function fetchItineraryDetails() {
+      const response = await fetch(`${apiBase}/api/planner/itinerary-details`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          original_request: originalRequest,
+          route_plan: routePlan,
+          transport_mode: routePlan.route_mode,
+          preferences: originalRequest?.preferences || [],
+          start_date: originalRequest?.start_date || null
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        showToast(data.detail || "日程详情生成失败，先展示路线摘要");
+        return;
+      }
+      routePlan = data;
+      sessionStorage.setItem("floattrip.routePlan", JSON.stringify(routePlan));
+    }
+
+    document.getElementById("editTrip").addEventListener("click", () => showToast("请返回规划页编辑行程需求"));
+    document.getElementById("regenerate").addEventListener("click", async () => {
+      if (!routePlan) return;
+      showToast("正在重新生成日程详情");
+      routePlan.days.forEach((day) => { day.itinerary_detail = null; });
+      await fetchItineraryDetails();
+      renderTripShell();
+      renderDay(activeDay);
+    });
+    document.getElementById("exportPdf").addEventListener("click", () => showToast("导出能力待接入"));
+    document.getElementById("shareTrip").addEventListener("click", () => showToast("分享能力待接入"));
+    document.getElementById("focusMap").addEventListener("click", () => showToast(`已聚焦 Day ${routePlan?.days?.[activeDay]?.day_index || 1} 路线摘要`));
+
+    loadRoutePlan();
+  </script>
+</body>
+</html>

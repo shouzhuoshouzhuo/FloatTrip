@@ -22,6 +22,7 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_MAX_SEARCH_RESULTS = 8
 DEFAULT_MAX_CANDIDATES = 28
 DEFAULT_MAX_MARKDOWN_CHARS = 60_000
+DEFAULT_MAX_SEARCH_ITERATIONS = 3
 TAVILY_MAX_RESULTS = 20
 MIN_MARKDOWN_CHARS = 200
 DEFAULT_SEARCH_TIMEOUT = 20.0
@@ -173,6 +174,9 @@ class CandidatePoolState(TypedDict, total=False):
     destination: str
     days: int
     query_plan: list[str]
+    pending_search_queries: list[str]
+    searched_queries: list[str]
+    search_iterations: int
     research_bundle: ResearchBundle
     markdown_guides: str
     markdown_documents: list[str]
@@ -288,6 +292,98 @@ def collect_research_for_queries(
         search_results=search_results,
         documents=documents,
         warnings=warnings,
+    )
+
+
+def search_markdown_research_tool(
+    query_plan: list[str],
+    *,
+    existing_bundle: ResearchBundle | None = None,
+    per_query_limit: int = 3,
+    max_results: int = DEFAULT_MAX_SEARCH_RESULTS,
+    max_page_chars: int = 12_000,
+) -> ResearchBundle:
+    """功能：供候选池 Agent 调用的真实搜索工具，统一完成搜索、抓取、清噪和结果合并。
+
+    参数：
+        query_plan：本轮要执行的搜索词列表。
+        existing_bundle：已有调研结果；传入时会按 URL 合并去重。
+        per_query_limit：每个搜索词最多接受的页面数量。
+        max_results：合并后整体最多接受的搜索结果数量。
+        max_page_chars：每篇 markdown 最多保留字符数。
+    返回值：
+        返回合并后的搜索词、搜索结果、markdown 文档和警告。
+    """
+    previous = existing_bundle or ResearchBundle(
+        query_plan=[],
+        search_results=[],
+        documents=[],
+        warnings=[],
+    )
+    remaining_results = max_results - len(previous.search_results)
+    if remaining_results <= 0 or not query_plan:
+        return previous
+
+    try:
+        new_bundle = collect_research_for_queries(
+            query_plan,
+            per_query_limit=per_query_limit,
+            max_results=remaining_results,
+            max_page_chars=max_page_chars,
+        )
+    except RuntimeError as exc:
+        if previous.documents:
+            return ResearchBundle(
+                query_plan=dedupe_preserve_order([*previous.query_plan, *query_plan]),
+                search_results=previous.search_results,
+                documents=previous.documents,
+                warnings=[*previous.warnings, f"补充搜索未获得可用 markdown：{exc}"],
+            )
+        raise
+    return merge_research_bundles(previous, new_bundle, max_results=max_results)
+
+
+def merge_research_bundles(
+    base_bundle: ResearchBundle,
+    new_bundle: ResearchBundle,
+    *,
+    max_results: int,
+) -> ResearchBundle:
+    """功能：合并多轮搜索调研结果，并按 URL 对搜索结果和文档去重。
+
+    参数：
+        base_bundle：上一轮累计调研结果。
+        new_bundle：本轮搜索工具返回的调研结果。
+        max_results：合并后最多保留的搜索结果数量。
+    返回值：
+        返回合并后的 ResearchBundle。
+    """
+    query_plan = dedupe_preserve_order([*base_bundle.query_plan, *new_bundle.query_plan])
+    search_results: list[SearchResult] = []
+    seen_result_urls: set[str] = set()
+    for result in [*base_bundle.search_results, *new_bundle.search_results]:
+        normalized_url = result.url.split("#", 1)[0]
+        if normalized_url in seen_result_urls:
+            continue
+        search_results.append(result)
+        seen_result_urls.add(normalized_url)
+        if len(search_results) >= max_results:
+            break
+
+    documents: list[ResearchDocument] = []
+    seen_document_urls: set[str] = set()
+    for document in [*base_bundle.documents, *new_bundle.documents]:
+        normalized_url = document.url.split("#", 1)[0]
+        if normalized_url in seen_document_urls:
+            continue
+        documents.append(document)
+        seen_document_urls.add(normalized_url)
+
+    return ResearchBundle(
+        query_plan=query_plan,
+        search_results=search_results,
+        documents=documents,
+        warnings=[*base_bundle.warnings, *new_bundle.warnings],
     )
 
 
@@ -602,6 +698,7 @@ def generate_hot_candidate_pool(
     max_search_results: int = DEFAULT_MAX_SEARCH_RESULTS,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
     max_page_chars: int = 12_000,
+    max_search_iterations: int = DEFAULT_MAX_SEARCH_ITERATIONS,
     model: str | None = None,
 ) -> CandidatePoolGenerationResult:
     """功能：运行热门候选景点池 Agent，生成搜索计划、调研网页并抽取候选景点。
@@ -614,6 +711,7 @@ def generate_hot_candidate_pool(
         max_search_results：整体最多接受的搜索结果数量。
         max_candidates：最多返回的候选景点数量。
         max_page_chars：每篇 markdown 最多保留字符数。
+        max_search_iterations：最多允许搜索工具调用轮次。
         model：DeepSeek 模型名；不传则读取 DEEPSEEK_MODEL。
     返回值：
         返回网页调研结果和带提及频率、偏好分的热门候选景点池。
@@ -628,6 +726,7 @@ def generate_hot_candidate_pool(
         per_query_limit=per_query_limit,
         max_search_results=max_search_results,
         max_page_chars=max_page_chars,
+        max_search_iterations=max_search_iterations,
     )
     try:
         result = graph.invoke(
@@ -813,6 +912,47 @@ def build_query_plan_prompt(destination: str, days: int, preferences: list[str])
 """.strip()
 
 
+def build_followup_query_plan_prompt(state: CandidatePoolState) -> str:
+    """功能：构造候选池 Agent 在证据不足时继续搜索的提示词。
+
+    参数：
+        state：包含目的地、已有搜索词、候选池和调研文档的 Agent 状态。
+    返回值：
+        返回完整提示词。
+    """
+    destination = state.get("destination", "")
+    days = state.get("days", 1)
+    preferences = state.get("preferences", [])
+    preference_text = "、".join(preferences) if preferences else "无明确偏好"
+    ranked_pool = state.get("ranked_candidate_pool")
+    candidate_names = []
+    if isinstance(ranked_pool, RankedCandidatePool):
+        candidate_names = [candidate.name for candidate in ranked_pool.candidate_pool[:12]]
+    searched_text = "、".join(state.get("searched_queries", [])) or "暂无"
+    candidate_text = "、".join(candidate_names) or "暂无稳定候选"
+    document_count = len(state.get("markdown_documents", []))
+    return f"""
+FloatTrip 热门候选景点池 Agent 已经完成一轮真实搜索，但信息仍不足，需要继续生成补充 query。
+
+目的地：{destination}
+旅行天数：{days} 天
+用户偏好：{preference_text}
+已搜索 query：{searched_text}
+当前候选景点：{candidate_text}
+当前可用 markdown 文档数：{document_count}
+
+请继续生成 2 到 4 条新的中文搜索 query，用于补足热门候选景点池。
+
+补充搜索目标：
+- 优先补足目的地本地热门景点、必去榜单、景点排行榜、经典景区集合。
+- 如果当前候选偏少，放宽到“{destination} 值得去的景点”“{destination} 旅游景点排名”“{destination} 景区推荐”。
+- 如果偏好相关候选不足，增加偏好玩法 query，但不要只搜小众内容。
+- 避免重复已经搜索过的 query。
+
+不要输出酒店、美食、交通、门票预约等非景点候选池 query。
+""".strip()
+
+
 def plan_search_queries_node(structured_query_llm: Any):
     """功能：生成候选景点池 Agent 的搜索词规划节点。
 
@@ -851,16 +991,71 @@ def plan_search_queries_node(structured_query_llm: Any):
             raw_queries = plan.queries
         elif isinstance(plan, dict):
             raw_queries = [str(query) for query in plan.get("queries", [])]
+        query_plan = normalize_query_plan(
+            raw_queries,
+            state.get("destination", ""),
+            state.get("days", 1),
+            state.get("preferences", []),
+        )
         return {
-            "query_plan": normalize_query_plan(
-                raw_queries,
-                state.get("destination", ""),
-                state.get("days", 1),
-                state.get("preferences", []),
-            )
+            "query_plan": query_plan,
+            "pending_search_queries": query_plan,
+            "searched_queries": [],
+            "search_iterations": 0,
         }
 
     return plan_search_queries
+
+
+def plan_followup_search_queries_node(structured_query_llm: Any):
+    """功能：生成候选池 Agent 的补充搜索词规划节点。
+
+    参数：
+        structured_query_llm：绑定 SearchQueryPlan schema 的 LLM。
+    返回值：
+        返回可注册到 LangGraph 的节点函数。
+    """
+
+    def plan_followup_search_queries(state: CandidatePoolState) -> CandidatePoolState:
+        """功能：根据当前候选池和已搜索 query 继续生成补充 query。
+
+        参数：
+            state：包含当前候选池、搜索历史和调研文档的 Agent 状态。
+        返回值：
+            返回更新后的 query_plan 和 pending_search_queries。
+        """
+        plan = structured_query_llm.invoke(
+            [
+                (
+                    "system",
+                    "你是 FloatTrip 的旅行调研搜索 Agent。你会根据已有搜索结果决定下一轮补充搜索词。",
+                ),
+                ("human", build_followup_query_plan_prompt(state)),
+            ]
+        )
+        raw_queries = []
+        if isinstance(plan, SearchQueryPlan):
+            raw_queries = plan.queries
+        elif isinstance(plan, dict):
+            raw_queries = [str(query) for query in plan.get("queries", [])]
+
+        existing_queries = [
+            *state.get("query_plan", []),
+            *state.get("searched_queries", []),
+        ]
+        pending_queries = normalize_followup_query_plan(
+            raw_queries,
+            state.get("destination", ""),
+            state.get("days", 1),
+            state.get("preferences", []),
+            existing_queries,
+        )
+        return {
+            "query_plan": dedupe_preserve_order([*state.get("query_plan", []), *pending_queries]),
+            "pending_search_queries": pending_queries,
+        }
+
+    return plan_followup_search_queries
 
 
 def collect_research_node(
@@ -879,21 +1074,34 @@ def collect_research_node(
     """
 
     def collect_research_from_plan(state: CandidatePoolState) -> CandidatePoolState:
-        """功能：执行 Tavily 多 query 搜索和网页 markdown 提纯。
+        """功能：调用真实搜索工具执行 Tavily 多 query 搜索和网页 markdown 提纯。
 
         参数：
             state：包含 query_plan 的 Agent 状态。
         返回值：
             返回调研结果和供 DeepSeek 抽取的 markdown 上下文。
         """
-        bundle = collect_research_for_queries(
-            state.get("query_plan", []),
+        pending_queries = state.get("pending_search_queries", [])
+        search_budget = min(
+            TAVILY_MAX_RESULTS,
+            max_search_results * (state.get("search_iterations", 0) + 1),
+        )
+        bundle = search_markdown_research_tool(
+            pending_queries,
+            existing_bundle=state.get("research_bundle"),
             per_query_limit=per_query_limit,
-            max_results=max_search_results,
+            max_results=search_budget,
             max_page_chars=max_page_chars,
+        )
+        searched_queries = dedupe_preserve_order(
+            [*state.get("searched_queries", []), *pending_queries]
         )
         return {
             "research_bundle": bundle,
+            "query_plan": bundle.query_plan,
+            "searched_queries": searched_queries,
+            "pending_search_queries": [],
+            "search_iterations": state.get("search_iterations", 0) + 1,
             "markdown_guides": build_markdown_guides(bundle.documents, DEFAULT_MAX_MARKDOWN_CHARS),
             "markdown_documents": [
                 document.text for document in bundle.documents if document.text.strip()
@@ -950,13 +1158,90 @@ def sort_candidates_node(state: CandidatePoolState) -> CandidatePoolState:
     返回值：
         返回包含 ranked_candidate_pool 的状态增量。
     """
+    candidate_pool = state.get("candidate_pool")
+    if not isinstance(candidate_pool, CandidatePool):
+        raise RuntimeError("DeepSeek 未返回候选景点池，请检查模型结构化输出或重试")
     return {
         "ranked_candidate_pool": rank_candidate_pool(
-            state["candidate_pool"],
+            candidate_pool,
             state.get("markdown_documents", [state["markdown_guides"]]),
             state.get("max_candidates", DEFAULT_MAX_CANDIDATES),
         )
     }
+
+
+def candidate_pool_needs_more_search(
+    state: CandidatePoolState,
+    *,
+    max_search_iterations: int,
+    max_search_results: int,
+) -> bool:
+    """功能：判断热门候选池证据是否不足，是否需要继续搜索。
+
+    参数：
+        state：包含候选池、搜索轮次和调研结果的 Agent 状态。
+        max_search_iterations：最多搜索轮次。
+        max_search_results：最多接受的搜索结果数量。
+    返回值：
+        候选数量或文档证据不足且仍有搜索预算时返回 True。
+    """
+    if state.get("search_iterations", 0) >= max_search_iterations:
+        return False
+
+    ranked_pool = state.get("ranked_candidate_pool")
+    candidate_count = (
+        len(ranked_pool.candidate_pool)
+        if isinstance(ranked_pool, RankedCandidatePool)
+        else 0
+    )
+    document_count = len(state.get("markdown_documents", []))
+    target_candidates = min(
+        state.get("max_candidates", DEFAULT_MAX_CANDIDATES),
+        max(8, state.get("days", 1) * 3),
+    )
+    evidence_is_low = document_count < 3 or candidate_count < target_candidates
+    research_bundle = state.get("research_bundle")
+    if (
+        evidence_is_low
+        and isinstance(research_bundle, ResearchBundle)
+        and len(research_bundle.search_results) >= TAVILY_MAX_RESULTS
+    ):
+        return False
+    if document_count < 3:
+        return True
+    return candidate_count < target_candidates
+
+
+def route_after_candidate_quality_check(
+    max_search_iterations: int,
+    max_search_results: int,
+):
+    """功能：生成 LangGraph 条件边函数，根据候选池质量决定继续搜索或结束。
+
+    参数：
+        max_search_iterations：最多搜索轮次。
+        max_search_results：最多接受的搜索结果数量。
+    返回值：
+        返回条件边函数，输出 search_more 或 finish。
+    """
+
+    def route(state: CandidatePoolState) -> str:
+        """功能：返回候选池 Agent 下一步路由。
+
+        参数：
+            state：当前 Agent 状态。
+        返回值：
+            返回 search_more 或 finish。
+        """
+        if candidate_pool_needs_more_search(
+            state,
+            max_search_iterations=max_search_iterations,
+            max_search_results=max_search_results,
+        ):
+            return "search_more"
+        return "finish"
+
+    return route
 
 
 def build_graph(structured_llm: Any) -> Any:
@@ -985,8 +1270,9 @@ def build_candidate_pool_agent_graph(
     per_query_limit: int,
     max_search_results: int,
     max_page_chars: int,
+    max_search_iterations: int = DEFAULT_MAX_SEARCH_ITERATIONS,
 ) -> Any:
-    """功能：构建搜索词规划、网页调研、候选抽取和排序的热门候选池 Agent。
+    """功能：构建带搜索工具和补充搜索循环的热门候选池 Agent。
 
     参数：
         structured_query_llm：绑定 SearchQueryPlan schema 的搜索词规划 LLM。
@@ -994,6 +1280,7 @@ def build_candidate_pool_agent_graph(
         per_query_limit：每个搜索词最多接受的页面数量。
         max_search_results：整体最多接受的搜索结果数量。
         max_page_chars：每篇 markdown 最多保留字符数。
+        max_search_iterations：最多允许搜索工具调用轮次。
     返回值：
         返回已编译的 LangGraph。
     """
@@ -1001,6 +1288,10 @@ def build_candidate_pool_agent_graph(
 
     graph_builder = StateGraph(CandidatePoolState)
     graph_builder.add_node("plan_search_queries", plan_search_queries_node(structured_query_llm))
+    graph_builder.add_node(
+        "plan_followup_search_queries",
+        plan_followup_search_queries_node(structured_query_llm),
+    )
     graph_builder.add_node(
         "collect_research",
         collect_research_node(per_query_limit, max_search_results, max_page_chars),
@@ -1011,7 +1302,15 @@ def build_candidate_pool_agent_graph(
     graph_builder.add_edge("plan_search_queries", "collect_research")
     graph_builder.add_edge("collect_research", "extract_candidates")
     graph_builder.add_edge("extract_candidates", "sort_candidates")
-    graph_builder.add_edge("sort_candidates", END)
+    graph_builder.add_conditional_edges(
+        "sort_candidates",
+        route_after_candidate_quality_check(max_search_iterations, max_search_results),
+        {
+            "search_more": "plan_followup_search_queries",
+            "finish": END,
+        },
+    )
+    graph_builder.add_edge("plan_followup_search_queries", "collect_research")
     return graph_builder.compile()
 
 
@@ -1191,6 +1490,71 @@ def normalize_query_plan(
         if len(normalized_queries) >= max_queries:
             break
     return normalized_queries
+
+
+def normalize_followup_query_plan(
+    llm_queries: list[str],
+    destination: str,
+    days: int,
+    preferences: list[str],
+    existing_queries: list[str],
+    max_queries: int = 4,
+) -> list[str]:
+    """功能：归一化补充搜索词，过滤已搜索 query，并在 LLM 输出不足时补充兜底 query。
+
+    参数：
+        llm_queries：DeepSeek 生成的补充搜索词。
+        destination：目的地名称。
+        days：旅行天数。
+        preferences：用户偏好。
+        existing_queries：已计划或已搜索的 query。
+        max_queries：最多保留补充搜索词数量。
+    返回值：
+        返回本轮待搜索的新 query。
+    """
+    fallback_queries = [
+        f"{destination} 值得去的景点",
+        f"{destination} 旅游景点排名",
+        f"{destination} 景区推荐",
+        *build_popular_fallback_queries(destination, days, preferences),
+    ]
+    existing_keys = {query.casefold() for query in existing_queries}
+    normalized_queries: list[str] = []
+    seen_queries: set[str] = set()
+    for query in [*llm_queries, *fallback_queries]:
+        cleaned = re.sub(r"\s+", " ", str(query).strip())
+        if not cleaned:
+            continue
+        dedupe_key = cleaned.casefold()
+        if dedupe_key in existing_keys or dedupe_key in seen_queries:
+            continue
+        normalized_queries.append(cleaned)
+        seen_queries.add(dedupe_key)
+        if len(normalized_queries) >= max_queries:
+            break
+    return normalized_queries
+
+
+def dedupe_preserve_order(items: list[str]) -> list[str]:
+    """功能：按原顺序对字符串列表去重。
+
+    参数：
+        items：待去重字符串列表。
+    返回值：
+        返回去空格、去重后的字符串列表。
+    """
+    deduped_items: list[str] = []
+    seen_items: set[str] = set()
+    for item in items:
+        cleaned = re.sub(r"\s+", " ", str(item).strip())
+        if not cleaned:
+            continue
+        dedupe_key = cleaned.casefold()
+        if dedupe_key in seen_items:
+            continue
+        deduped_items.append(cleaned)
+        seen_items.add(dedupe_key)
+    return deduped_items
 
 
 def chinese_days(days: int) -> str:

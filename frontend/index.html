@@ -1025,23 +1025,24 @@
         <div class="form-stack">
           <div class="field-row">
             <label for="destination">目的地</label>
-            <input class="soft-input" id="destination" value="南京" />
+            <input class="soft-input" id="destination" autocomplete="off" />
           </div>
           <div class="field-row">
             <label for="startDate">开始日期</label>
-            <input class="soft-input" id="startDate" type="date" value="2026-06-10" />
+            <input class="soft-input" id="startDate" type="date" autocomplete="off" />
           </div>
           <div class="field-row">
             <label for="endDate">结束日期</label>
-            <input class="soft-input" id="endDate" type="date" value="2026-06-12" />
+            <input class="soft-input" id="endDate" type="date" autocomplete="off" />
           </div>
           <div class="field-row">
             <label for="budget">总预算</label>
-            <input class="soft-input" id="budget" value="¥ 3,000 / 人" />
+            <input class="soft-input" id="budget" autocomplete="off" />
           </div>
           <div class="field-row">
             <label for="pace">旅行节奏</label>
             <select class="soft-input" id="pace">
+              <option value="" selected></option>
               <option>轻松休闲</option>
               <option>均衡探索</option>
               <option>深度体验</option>
@@ -1050,19 +1051,19 @@
           <div class="field-row">
             <label>偏好标签</label>
             <div class="tag-row">
-              <button class="pref-chip active" type="button">美食</button>
-              <button class="pref-chip active" type="button">文化历史</button>
-              <button class="pref-chip active" type="button">城市漫步</button>
+              <button class="pref-chip" type="button">美食</button>
+              <button class="pref-chip" type="button">文化历史</button>
+              <button class="pref-chip" type="button">城市漫步</button>
               <button class="pref-chip" type="button">少走路</button>
             </div>
           </div>
           <div class="field-row">
             <label for="spots">已经想去的景点</label>
-            <input class="soft-input" id="spots" value="中山陵、明孝陵、夫子庙、老门东、南京博物院、总统府" />
+            <input class="soft-input" id="spots" autocomplete="off" />
           </div>
           <div class="field-row textarea-wrap">
             <label for="notes">补充说明</label>
-            <textarea class="soft-input" id="notes">想看文化历史和城市漫步，路线不要太赶，优先公共交通。</textarea>
+            <textarea class="soft-input" id="notes" autocomplete="off"></textarea>
           </div>
         </div>
 
@@ -1129,7 +1130,7 @@
           <article class="glass-card itinerary-card" id="itinerary" aria-labelledby="itineraryTitle">
             <div class="itinerary-head">
               <h3 id="itineraryTitle">可编辑每日行程预览</h3>
-              <a href="#routePreview">查看完整行程 ></a>
+              <a href="itinerary-detail.html" id="viewFullItinerary">查看完整行程 ></a>
             </div>
 
             <div class="day-strip">
@@ -1186,6 +1187,10 @@
     const destinationInput = document.getElementById("destination");
     const startDateInput = document.getElementById("startDate");
     const endDateInput = document.getElementById("endDate");
+    const budgetInput = document.getElementById("budget");
+    const paceInput = document.getElementById("pace");
+    const spotsInput = document.getElementById("spots");
+    const notesInput = document.getElementById("notes");
     const dayTabsContainer = document.querySelector(".day-tabs");
     const dayStrip = document.querySelector(".day-strip");
     const routeColors = ["#2f9fe8", "#44b58a", "#e39b38"];
@@ -1264,20 +1269,21 @@
      * 返回值：返回 /api/planner/generate 接口需要的 JSON 对象。
      */
     function buildPlannerPayload() {
-      const destination = destinationInput.value.trim() || "南京";
+      const destination = destinationInput.value.trim();
       return {
         destination,
         days: requestedDays(),
+        start_date: startDateInput.value || null,
         min_cluster_size: 2,
         max_search_results: 8,
         max_candidates: 28,
-        pace: document.getElementById("pace").value,
+        pace: paceInput.value,
         preferences: [...document.querySelectorAll(".pref-chip.active")].map((chip) => chip.textContent.trim()),
-        preferred_spots: document.getElementById("spots").value
+        preferred_spots: spotsInput.value
           .split(/[、，,;；\n\r\t]/)
           .map((item) => item.trim())
           .filter(Boolean),
-        notes: document.getElementById("notes").value.trim()
+        notes: notesInput.value.trim()
       };
     }
 
@@ -1339,8 +1345,20 @@
       });
     }
 
+    function clearPlannerForm() {
+      destinationInput.value = "";
+      startDateInput.value = "";
+      endDateInput.value = "";
+      budgetInput.value = "";
+      paceInput.value = "";
+      spotsInput.value = "";
+      notesInput.value = "";
+      document.querySelectorAll(".pref-chip").forEach((chip) => chip.classList.remove("active"));
+    }
+
     function resetDemo() {
       clearTimers();
+      clearPlannerForm();
       setIdleStage();
       routePlan = { days: [] };
       renderEmptyRoute();
@@ -1355,6 +1373,9 @@
       scheduleProgress();
       try {
         const payload = buildPlannerPayload();
+        if (!payload.destination) {
+          throw new Error("请先填写目的地");
+        }
         setMapStatus("正在完整生成", `POST ${apiBase}/api/planner/generate`);
         const response = await fetch(`${apiBase}/api/planner/generate`, {
           method: "POST",
@@ -1366,6 +1387,8 @@
           throw new Error(data.detail || `后端返回 ${response.status}`);
         }
         routePlan = data;
+        sessionStorage.setItem("floattrip.routePlan", JSON.stringify(data));
+        sessionStorage.setItem("floattrip.originalRequest", JSON.stringify(payload));
         rebuildDayTabs(data.days);
         renderItineraryCards(data.days);
         renderRouteDay(0);
@@ -1585,6 +1608,12 @@
     fitRouteButton.addEventListener("click", fitActiveRoute);
     startButton.addEventListener("click", startDemo);
     resetButton.addEventListener("click", resetDemo);
+    document.getElementById("viewFullItinerary").addEventListener("click", (event) => {
+      if (!routePlan.days.length) {
+        event.preventDefault();
+        showToast("请先启动完整规划，再查看行程详情");
+      }
+    });
     resetDemo();
     bootAmapRoutePreview();
   </script>
