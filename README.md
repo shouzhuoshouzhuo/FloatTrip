@@ -28,14 +28,11 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 
 ## 🎬 演示
 
-> 输入：`帮我规划南京3天旅游，6月10日出发，喜欢历史古迹，慢节奏`
+> 输入：`我要去景德镇3日游，喜欢陶艺，喜欢吃江西辣菜，喜欢夜景，不喜欢早起 6月5日到6月7日`
 
-<div align="center">
-
-![演示截图](https://placeholder.com/demo.png)
-<!-- 替换为真实截图 -->
-
-</div>
+<p align="center">
+  <img src="./image.png" alt="AI 旅游规划助手界面演示" width="900" />
+</p>
 
 ---
 
