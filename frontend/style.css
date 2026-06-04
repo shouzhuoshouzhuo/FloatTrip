@@ -1,0 +1,398 @@
+/* ─── 全局 ─────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  background: #f5f3ef;
+  color: #2d2d2d;
+  min-height: 100vh;
+}
+
+/* ─── 页头 ─────────────────────────────────────── */
+header {
+  background: linear-gradient(135deg, #1a6b6b 0%, #2e9898 100%);
+  color: white;
+  padding: 28px 24px 24px;
+  text-align: center;
+}
+header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: .03em; }
+header p  { margin-top: 4px; opacity: .8; font-size: .9rem; }
+
+/* ─── 主区域 ────────────────────────────────────── */
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 16px 60px;
+}
+
+/* ─── 查询区 ────────────────────────────────────── */
+#query-section {
+  background: white;
+  border-radius: 14px;
+  padding: 22px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.07);
+}
+#query-section label {
+  display: block;
+  font-size: .85rem;
+  color: #666;
+  margin-bottom: 8px;
+}
+#query-input {
+  width: 100%;
+  border: 1.5px solid #d8d5ce;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: .95rem;
+  resize: vertical;
+  min-height: 90px;
+  transition: border-color .2s;
+  font-family: inherit;
+  line-height: 1.5;
+}
+#query-input:focus { outline: none; border-color: #2e9898; }
+#submit-btn {
+  margin-top: 14px;
+  width: 100%;
+  background: #2e9898;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 13px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s, transform .1s;
+}
+#submit-btn:hover  { background: #1a6b6b; }
+#submit-btn:active { transform: scale(.98); }
+#submit-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+/* ─── Loading ───────────────────────────────────── */
+#loading-section {
+  display: none;
+  text-align: center;
+  padding: 50px 24px;
+}
+.spinner {
+  width: 48px; height: 48px;
+  border: 4px solid #d8d5ce;
+  border-top-color: #2e9898;
+  border-radius: 50%;
+  animation: spin .9s linear infinite;
+  margin: 0 auto 18px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading-section p { color: #666; font-size: .95rem; line-height: 1.6; }
+
+/* ─── 错误区 ────────────────────────────────────── */
+#error-section {
+  display: none;
+  background: #fff5f5;
+  border: 1.5px solid #f5a0a0;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-top: 18px;
+}
+#error-section h3 { color: #c0392b; font-size: 1rem; margin-bottom: 8px; }
+#error-section ul  { padding-left: 18px; color: #555; font-size: .9rem; line-height: 1.8; }
+
+/* ─── 结果区 ────────────────────────────────────── */
+#result-section { display: none; margin-top: 22px; }
+
+/* 计划头部 */
+.plan-header {
+  background: white;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.07);
+  margin-bottom: 18px;
+}
+.plan-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #1a3a3a;
+}
+.plan-dates {
+  color: #666;
+  font-size: .9rem;
+  margin-top: 4px;
+}
+.plan-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.badge {
+  font-size: .78rem;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #eef8f8;
+  color: #2e9898;
+  border: 1px solid #b8e0e0;
+}
+.badge.approved   { background: #eafaf1; color: #1a7a45; border-color: #a0d8b0; }
+.badge.unapproved { background: #fff8e1; color: #a07800; border-color: #ffe082; }
+
+/* 天标签 */
+.day-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.tab {
+  flex-shrink: 0;
+  padding: 8px 18px;
+  border-radius: 20px;
+  border: 1.5px solid #d8d5ce;
+  background: white;
+  cursor: pointer;
+  font-size: .9rem;
+  color: #555;
+  transition: all .2s;
+}
+.tab:hover { border-color: #2e9898; color: #2e9898; }
+.tab.active {
+  background: #2e9898;
+  border-color: #2e9898;
+  color: white;
+  font-weight: 600;
+}
+.day-theme {
+  font-size: .85rem;
+  color: #888;
+  margin-bottom: 14px;
+  padding-left: 4px;
+}
+
+/* ─── 时间轴 ────────────────────────────────────── */
+.timeline {
+  position: relative;
+  padding-left: 28px;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 10px; top: 0; bottom: 0;
+  width: 2px;
+  background: #d8d5ce;
+  border-radius: 1px;
+}
+
+/* 时间轴节点圆点 */
+.timeline-node {
+  position: relative;
+}
+.timeline-node::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 20px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid #2e9898;
+}
+
+/* ─── 距离徽章 ─────────────────────────────────── */
+.dist-badge {
+  text-align: center;
+  padding: 6px 0;
+  color: #aaa;
+  font-size: .8rem;
+  position: relative;
+}
+.dist-badge span {
+  background: #f5f3ef;
+  padding: 2px 10px;
+  border-radius: 10px;
+  border: 1px solid #e0ddd7;
+}
+
+/* ─── 卡片基础 ─────────────────────────────────── */
+.card {
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,.06);
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.card-body { padding: 14px 16px 16px; flex: 1; }
+.card-title { font-size: 1rem; font-weight: 600; color: #1a3a3a; line-height: 1.3; }
+.card-meta  { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 7px; align-items: center; }
+.meta-item  { font-size: .8rem; color: #666; display: flex; align-items: center; gap: 3px; }
+
+/* 图片 */
+.card-photo {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  display: block;
+  background: #e8e5de;
+}
+.card-photo-placeholder {
+  width: 100%;
+  height: 160px;
+  background: linear-gradient(135deg, #e8e5de, #d8d5ce);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #aaa;
+  font-size: 2rem;
+}
+
+/* ─── 景点卡 ────────────────────────────────────── */
+.attraction-card { border-left: 4px solid #2e9898; }
+
+.period-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: .75rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 500;
+}
+.period-badge.morning   { background: #fff8e1; color: #a07800; }
+.period-badge.afternoon { background: #e3f0ff; color: #1a5cb0; }
+.period-badge.evening   { background: #f0e8ff; color: #6a3cb0; }
+
+.time-range {
+  font-size: .82rem;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+.open-time {
+  font-size: .78rem;
+  color: #aaa;
+  margin-top: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── 餐厅卡 ────────────────────────────────────── */
+.meal-card { border-left: 4px solid #e07b39; }
+.meal-card.lunch  { border-left-color: #e0a039; }
+.meal-card.dinner { border-left-color: #e07b39; }
+
+.meal-type-label {
+  font-size: .78rem;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 4px;
+}
+
+/* 推荐 / 降级理由 */
+.reason-box {
+  margin-top: 10px;
+  background: #e8f4fd;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: .82rem;
+  color: #1a5cb0;
+  line-height: 1.5;
+}
+.reason-box::before { content: '💬 '; }
+
+.fallback-box {
+  margin-top: 8px;
+  background: #fff3e0;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: .82rem;
+  color: #a07800;
+  line-height: 1.5;
+}
+.fallback-box::before { content: '⚠️ 降级：'; }
+
+/* ─── 无餐厅提醒卡 ─────────────────────────────── */
+.no-restaurant-card {
+  border-left: 4px solid #ccc;
+  background: #fafafa;
+}
+.no-restaurant-notice {
+  font-size: .85rem;
+  color: #a07800;
+  background: #fff8e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+
+/* ─── 全天游：景点"全天"badge ────────────────────── */
+.period-badge.full-day { background: #f0fff4; color: #1a7a45; }
+
+/* ─── 全天游：餐饮并排行 ──────────────────────────── */
+.meals-section-label {
+  font-size: .8rem;
+  color: #999;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  margin: 14px 0 8px;
+  padding-left: 4px;
+}
+.meals-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.meals-row .meal-half {
+  flex: 1;
+  min-width: 0;
+}
+.meals-row .card-photo,
+.meals-row .card-photo-placeholder {
+  height: 100px;
+}
+
+/* ─── 规划过程折叠 ─────────────────────────────── */
+.history-details {
+  margin-top: 24px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.06);
+  overflow: hidden;
+}
+.history-details summary {
+  padding: 14px 18px;
+  cursor: pointer;
+  font-size: .9rem;
+  font-weight: 600;
+  color: #555;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.history-details summary::after { content: '▼'; font-size: .7rem; }
+.history-details[open] summary::after { content: '▲'; }
+.history-list {
+  padding: 0 18px 16px;
+  border-top: 1px solid #f0ede8;
+}
+.history-list li {
+  list-style: none;
+  font-size: .82rem;
+  color: #666;
+  padding: 6px 0;
+  border-bottom: 1px dashed #f0ede8;
+  line-height: 1.5;
+}
+.history-list li:last-child { border-bottom: none; }
+
+/* ─── 响应式 ────────────────────────────────────── */
+@media (max-width: 480px) {
+  header h1 { font-size: 1.3rem; }
+  .card-photo, .card-photo-placeholder { height: 120px; }
+  .plan-title { font-size: 1.15rem; }
+}

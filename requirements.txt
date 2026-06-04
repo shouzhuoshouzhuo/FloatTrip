@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic>=2.0
+langgraph>=1.2
+langchain-openai
+httpx
