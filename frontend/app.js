@@ -243,16 +243,45 @@ function buildTimeline(items) {
   }
 }
 
+/* ─── 天气工具 ──────────────────────────────────── */
+function getWeatherForDate(weatherForecast, dateStr) {
+  if (!weatherForecast || !dateStr) return null;
+  return weatherForecast.find(w => w.date === dateStr) || null;
+}
+
+function weatherIcon(weather) {
+  if (!weather) return '☀️';
+  if (weather.includes('雨'))                        return '🌧️';
+  if (weather.includes('雪'))                        return '❄️';
+  if (weather.includes('雾') || weather.includes('霾')) return '🌫️';
+  if (weather.includes('阴'))                        return '☁️';
+  if (weather.includes('多云'))                      return '⛅';
+  return '☀️';
+}
+
 /* ─── 渲染天标签 ───────────────────────────────── */
-function buildDayTabs(days) {
+function buildDayTabs(days, weatherForecast) {
   const tabsEl = document.getElementById('day-tabs');
   tabsEl.innerHTML = '';
 
   days.forEach((day, i) => {
+    const w   = getWeatherForDate(weatherForecast, day.date);
     const btn = document.createElement('button');
     btn.className = 'tab' + (i === 0 ? ' active' : '');
-    btn.textContent = `Day ${day.day}`;
+    if (w && w.is_bad) btn.classList.add('rainy');
     if (day.date) btn.title = day.date;
+
+    const dayLabel = document.createElement('span');
+    dayLabel.textContent = `Day ${day.day}`;
+    btn.appendChild(dayLabel);
+
+    if (w) {
+      const wSpan = document.createElement('span');
+      wSpan.className = 'tab-weather';
+      wSpan.textContent = `${weatherIcon(w.day_weather)} ${w.day_temp}°C`;
+      btn.appendChild(wSpan);
+    }
+
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
@@ -310,14 +339,48 @@ function buildHistory(history) {
   });
 }
 
+/* ─── 天气降级 banner ──────────────────────────── */
+function renderWeatherNoteBanner(note) {
+  const old = document.getElementById('weather-note-banner');
+  if (old) old.remove();
+  if (!note) return;
+  const banner = document.createElement('div');
+  banner.id = 'weather-note-banner';
+  banner.className = 'weather-note-banner';
+  banner.textContent = `ℹ️ ${note}`;
+  document.querySelector('.plan-header').insertAdjacentElement('afterend', banner);
+}
+
+/* ─── 路线问题 bullet 卡 ───────────────────────── */
+function renderRouteIssuesCard(issues) {
+  const old = document.getElementById('route-issues-card');
+  if (old) old.remove();
+  if (!issues || issues.length === 0) return;
+  const card = document.createElement('div');
+  card.id = 'route-issues-card';
+  card.className = 'route-issues-card';
+  card.innerHTML = `
+    <div class="route-issues-title">⚠️ 路线注意事项（已达最大优化轮次）</div>
+    <ul class="route-issues-list">
+      ${issues.map(i => `<li>${escHtml(i)}</li>`).join('')}
+    </ul>`;
+  document.getElementById('history-details').insertAdjacentElement('beforebegin', card);
+}
+
 /* ─── 主渲染入口 ───────────────────────────────── */
 function renderPlan(data) {
   currentPlanData = data;
 
   buildHeader(data.plan);
-  buildDayTabs(data.plan.days);
+  buildDayTabs(data.plan.days, data.plan.weather_forecast || []);
   switchDay(0);
   buildHistory(data.history);
+
+  renderWeatherNoteBanner(data.plan.weather_note);
+
+  if (!data.plan.approved && data.plan.route_issues?.length > 0) {
+    renderRouteIssuesCard(data.plan.route_issues);
+  }
 
   showSection('result');
   resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });

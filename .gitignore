@@ -1,4 +1,6 @@
 .env.local
+todos.md
+tests/
 __pycache__/
 *.py[cod]
 *.pyc

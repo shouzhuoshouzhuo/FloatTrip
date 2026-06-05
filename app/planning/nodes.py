@@ -20,8 +20,10 @@ from app.planning.helpers import (
     day_proximity_report,
     dinner_anchor_spot,
     fetch_city_spots,
+    fetch_weather_for_dates,
     filter_by_rating,
     format_spots_for_llm,
+    format_weather_for_llm,
     haversine_km,
     invoke_structured,
     last_spot_of_period,
@@ -58,6 +60,10 @@ def make_intent_node(model_name: str | None):
         end   = parse_iso_date(result.travel_end_date)
         destination = result.destination.strip() or None
 
+        # travel_days 兜底：有出发日期 + 天数时，推算结束日期
+        if start and not end and result.travel_days > 0:
+            end = start + timedelta(days=result.travel_days - 1)
+
         missing: list[str] = []
         if not destination:
             missing.append("destination（目的地）")
@@ -73,14 +79,22 @@ def make_intent_node(model_name: str | None):
             else:
                 days = (end - start).days + 1
 
+        # 天气预报（仅当目的地和日期均已确定时拉取）
+        forecast: list[dict[str, Any]] = []
+        w_note: str | None = None
+        if not missing and destination and start and end:
+            forecast, w_note = fetch_weather_for_dates(destination, start, end, amap_key())
+
         def opt(v: str) -> str | None:
             return v.strip() or None
 
+        weather_log = f"，天气预报={len(forecast)}天" if forecast else ("，天气获取失败/超出范围" if not missing else "")
         note = (
             f"意图识别：destination={destination}，{start}~{end}（{days}天）"
             f"，景点偏好={opt(result.attraction_preference)}"
             f"，餐饮偏好={opt(result.food_preference)}"
             f"，习惯={opt(result.habit_preference)}"
+            f"{weather_log}"
         )
         return {
             "destination": destination,
@@ -91,6 +105,8 @@ def make_intent_node(model_name: str | None):
             "habit_preference": opt(result.habit_preference),
             "days": days,
             "missing_fields": missing,
+            "weather_forecast": forecast,
+            "weather_note": w_note,
             "history": state.history + [note],
         }
 
@@ -125,12 +141,19 @@ def make_planner_node(model_name: str | None):
                 f"评审修改意见（请据此修订）：\n{state.route_modify_opinion}"
             )
 
+        weather_text = format_weather_for_llm(state.weather_forecast)
+        weather_block = (
+            f"\n\n出行天气预报（请严格依据此安排景点，雨雪天优先室内）：\n{weather_text}"
+            if weather_text else "\n\n（无天气信息，按晴天规划）"
+        )
+
         prompt = (
             f"用户需求：{state.query}\n"
             f"目的地：{state.destination}\n旅行天数：{state.days} 天\n"
             f"每天景点数上限：{state.max_per_day}\n"
             f"景点偏好：{state.attraction_preference or '无'}\n"
-            f"游玩习惯/节奏：{state.habit_preference or '无'}\n\n"
+            f"游玩习惯/节奏：{state.habit_preference or '无'}"
+            f"{weather_block}\n\n"
             f"候选景点池（共 {len(state.pois)} 个）：\n{cand_text}"
             f"{feedback}\n\n请给出 {state.days} 天带时刻表的逐天景点安排。"
         )
@@ -158,9 +181,17 @@ def make_reviewer_node(model_name: str | None):
             f"开放时间冲突：{('；'.join(bad_open)) or '无'}\n"
             f"非候选池景点：{('；'.join(bad_unknown)) or '无'}"
         )
+
+        weather_text = format_weather_for_llm(state.weather_forecast)
+        weather_block = (
+            f"\n出行天气预报：\n{weather_text}\n"
+            if weather_text else "\n（无天气信息）\n"
+        )
+
         prompt = (
             f"目的地：{state.destination}，共 {state.days} 天，每天上限 {state.max_per_day}。\n"
-            f"用户游玩习惯：{state.habit_preference or '无'}\n\n"
+            f"用户游玩习惯：{state.habit_preference or '无'}"
+            f"{weather_block}\n"
             f"候选景点池：\n{format_spots_for_llm(state.pois)}\n\n"
             f"待评审路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
             f"系统客观预检（请据此判断）：\n{facts}\n\n请评审并给出结论。"
@@ -173,6 +204,7 @@ def make_reviewer_node(model_name: str | None):
             "approved": approved,
             "need_modify_route": not approved,
             "route_modify_opinion": result.route_modify_opinion,
+            "reviewer_issues": result.issues,   # 每轮覆盖，最终保存最后一轮的问题
             "history": state.history + [note],
         }
 
@@ -367,6 +399,10 @@ def finalize_node(state: TravelPlanState) -> dict[str, Any]:
         },
         "approved": state.approved,
         "review_rounds": state.review_round,
+        "weather_forecast": state.weather_forecast,
+        "weather_note": state.weather_note,
+        # 达最大迭代轮数仍未通过时，透传 reviewer 最后一轮问题给前端
+        "route_issues": state.reviewer_issues if not state.approved else [],
         "days": days_out,
     }
     return {"final_plan": final_plan, "history": state.history + ["finalize：已组装最终计划"]}

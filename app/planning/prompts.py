@@ -4,6 +4,9 @@ INTENT_SYSTEM = (
     "你是旅游意图识别助手。请从用户的一句话需求中抽取结构化信息。\n"
     "今天的日期是 {today}（{weekday}）。请据此把『明天/下周末/三天后/这个月底』等"
     "相对时间换算成具体的 YYYY-MM-DD 日期。\n"
+    "travel_days：如用户说了『3日游』『五天四夜』等天数，填入对应整数；没有则填 0。\n"
+    "如果用户给出了出发日期和天数（如『明天开始3日游』），请据此推算 travel_end_date；"
+    "如果只有天数没有日期，travel_start_date 和 travel_end_date 均留空。\n"
     "destination 只填城市名。attraction_preference / food_preference / habit_preference "
     "是可选偏好，用户没提就返回空字符串，不要编造。"
 )
@@ -23,7 +26,10 @@ PLANNER_SYSTEM = (
     "period 设为 evening，start_time 通常在 18:30-20:00 之间。"
     "每天 evening 景点不超过 1-2 个，不强制每天都有；没有合适的晚游景点可不安排。\n"
     "输出中 spots 必须严格按时间先后排列（morning → afternoon → evening）。\n"
-    "收到评审意见时针对性修订，并在 notes 里说明改了什么。"
+    "收到评审意见时针对性修订，并在 notes 里说明改了什么。\n"
+    "7. 天气适应：如 prompt 中提供了天气信息，请严格据此安排——"
+    "雨天/雪天优先安排室内景点（博物馆/展馆/商业街区/室内景区），"
+    "户外景点尽量安排在晴天；notes 中说明天气相关调整。"
 )
 
 REVIEWER_SYSTEM = (
@@ -36,6 +42,8 @@ REVIEWER_SYSTEM = (
     "5. 贴合习惯：每天景点数量、起止时间、节奏符合用户『游玩习惯』。\n"
     "6. 夜间行程合理性：period=evening 的景点须确实适合晚上游览（开放时间覆盖夜间，"
     "即关闭时间 ≥ 20:00），不能把纯白天景点误标为 evening；evening 景点须排在 afternoon 景点之后。\n"
+    "7. 天气合理性：若 prompt 中提供了天气信息，雨雪天不应大量安排露天景点；"
+    "如违反请打回并在 route_modify_opinion 中指出具体是哪天、哪些景点违反了天气约束。\n"
     "全部达标才 approved=true；否则给出具体、可执行的 route_modify_opinion。"
 )
 

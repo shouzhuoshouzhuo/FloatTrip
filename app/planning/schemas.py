@@ -16,6 +16,7 @@ class IntentExtraction(BaseModel):
     destination: str = Field(default="", description="旅游目的地城市名，如『南京』；没有则空字符串")
     travel_start_date: str = Field(default="", description="开始日期，格式 YYYY-MM-DD；没有则空")
     travel_end_date: str = Field(default="", description="结束日期，格式 YYYY-MM-DD；没有则空")
+    travel_days: int = Field(default=0, description="旅游天数，如『3日游』→3、『五天四夜』→5；没有则0")
     attraction_preference: str = Field(default="", description="景点偏好，如『历史古迹/自然风光』；没有则空")
     food_preference: str = Field(default="", description="用餐偏好，如『本地小吃/清淡』；没有则空")
     habit_preference: str = Field(
@@ -108,9 +109,16 @@ class TravelPlanState(BaseModel):
     approved: bool = False
     history: list[str] = Field(default_factory=list)
 
+    # 天气（意图识别后拉取）
+    weather_forecast: list[dict[str, Any]] = Field(default_factory=list)
+    weather_note: Optional[str] = None      # 超出预报范围/接口失败时的降级说明
+
     # 餐饮（一次成型）
     meal_candidates: list[dict[str, Any]] = Field(default_factory=list)
     meals: list[dict[str, Any]] = Field(default_factory=list)
+
+    # Reviewer 最后一轮发现的问题（最大轮数未通过时透传给前端）
+    reviewer_issues: list[str] = Field(default_factory=list)
 
     # 最终输出
     final_plan: Optional[dict[str, Any]] = None

@@ -390,6 +390,55 @@ main {
 }
 .history-list li:last-child { border-bottom: none; }
 
+/* ─── 天气降级 banner ──────────────────────────── */
+.weather-note-banner {
+  background: #e8f4fd;
+  border: 1.5px solid #90caf9;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: .85rem;
+  color: #1a5cb0;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+/* ─── Tab 天气小字 ──────────────────────────────── */
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.tab-weather {
+  font-size: .72rem;
+  opacity: .85;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.tab.rainy { border-color: #90caf9; }
+.tab.rainy.active { background: #1a5cb0; border-color: #1a5cb0; }
+
+/* ─── 路线问题卡 ────────────────────────────────── */
+.route-issues-card {
+  background: #fff8e1;
+  border: 1.5px solid #ffe082;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-top: 18px;
+}
+.route-issues-title {
+  font-size: .95rem;
+  font-weight: 700;
+  color: #a07800;
+  margin-bottom: 10px;
+}
+.route-issues-list {
+  padding-left: 18px;
+  color: #6b4f00;
+  font-size: .87rem;
+  line-height: 1.8;
+}
+
 /* ─── 响应式 ────────────────────────────────────── */
 @media (max-width: 480px) {
   header h1 { font-size: 1.3rem; }

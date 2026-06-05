@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import os
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from app.core.env import load_local_env
@@ -202,6 +202,77 @@ def invoke_structured(llm: Any, messages: list[tuple[str, str]], *, retries: int
         if result is not None:
             return result
     raise RuntimeError(f"结构化输出连续 {retries} 次返回 None，模型未产出有效结果")
+
+
+# ─── 餐厅 POI 解析 ────────────────────────────────────────────
+
+# ─── 天气工具 ─────────────────────────────────────────────────
+
+def fetch_weather_for_dates(
+    destination: str,
+    start_date: date,
+    end_date: date,
+    api_key: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """获取旅游日期范围内的逐日天气预报。
+
+    调用高德天气 API（最多约 4 天预报），按旅游日期切片匹配。
+
+    Returns:
+        (forecast_list, weather_note)
+        - forecast_list: 与旅游日期匹配的天气列表（空表示无可用预报）
+        - weather_note:  降级说明文字（正常获取时为 None）
+    """
+    from app.providers.weather.amap import fetch_forecast
+
+    try:
+        all_forecasts = fetch_forecast(destination, api_key)
+    except Exception:
+        all_forecasts = []
+
+    if not all_forecasts:
+        return [], "天气信息获取失败，按晴天规划路线"
+
+    forecast_map = {f["date"]: f for f in all_forecasts}
+
+    # 生成旅游日期序列
+    travel_dates: list[str] = []
+    cur = start_date
+    while cur <= end_date:
+        travel_dates.append(cur.isoformat())
+        cur += timedelta(days=1)
+
+    matched = [forecast_map[d] for d in travel_dates if d in forecast_map]
+    missing_dates = [d for d in travel_dates if d not in forecast_map]
+
+    if not matched:
+        return [], "旅游日期超出天气预报范围（高德预报约 4 天内），建议出行前关注天气预报"
+
+    note: str | None = None
+    if missing_dates:
+        note = (
+            f"部分旅游日期（{'、'.join(missing_dates)}）超出天气预报范围，"
+            "建议出行前关注天气预报"
+        )
+
+    return matched, note
+
+
+def format_weather_for_llm(forecast: list[dict[str, Any]]) -> str:
+    """格式化天气信息供 LLM 读取，如：
+    2024-06-05: 白天晴/夜间晴，气温22-32°C
+    2024-06-06: 白天中雨/夜间小雨，气温18-24°C ⚠️ 雨雪天气
+    """
+    if not forecast:
+        return ""
+    lines = []
+    for w in forecast:
+        warning = " ⚠️ 雨雪天气，请优先安排室内景点" if w.get("is_bad") else ""
+        lines.append(
+            f"{w['date']}: 白天{w['day_weather']}/夜间{w['night_weather']}，"
+            f"气温{w['night_temp']}-{w['day_temp']}°C{warning}"
+        )
+    return "\n".join(lines)
 
 
 # ─── 餐厅 POI 解析 ────────────────────────────────────────────
