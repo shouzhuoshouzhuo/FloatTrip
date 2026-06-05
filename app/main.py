@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -17,8 +18,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app.core.env import load_local_env
 from app.planning.graph import run as run_plan
 
+load_local_env()
 
 # ─── 应用 ────────────────────────────────────────────────────
 
@@ -46,6 +49,15 @@ class PlanRequest(BaseModel):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/config")
+def config():
+    """暴露前端地图所需的高德 JS API 密钥（不含敏感 REST Key）。"""
+    return {
+        "amap_js_key":           os.getenv("AMAP_JS_KEY", ""),
+        "amap_js_security_code": os.getenv("AMAP_JS_SECURITY_CODE", ""),
+    }
 
 
 @app.post("/api/plan")
