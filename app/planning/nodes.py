@@ -147,6 +147,15 @@ def make_planner_node(model_name: str | None):
             if weather_text else "\n\n（无天气信息，按晴天规划）"
         )
 
+        # 历轮沟通记录：让 Planner 知道自己已响应了哪些意见
+        dialogue_block = ""
+        if state.planner_reviewer_dialogue:
+            dialogue_text = "\n".join(state.planner_reviewer_dialogue)
+            dialogue_block = (
+                f"\n\n【历轮沟通记录（请对照，确认哪些意见已响应、哪些【紧急必须优先改】仍未修复）】\n"
+                f"{dialogue_text}"
+            )
+
         prompt = (
             f"用户需求：{state.query}\n"
             f"目的地：{state.destination}\n旅行天数：{state.days} 天\n"
@@ -155,13 +164,21 @@ def make_planner_node(model_name: str | None):
             f"游玩习惯/节奏：{state.habit_preference or '无'}"
             f"{weather_block}\n\n"
             f"候选景点池（共 {len(state.pois)} 个）：\n{cand_text}"
-            f"{feedback}\n\n请给出 {state.days} 天带时刻表的逐天景点安排。"
+            f"{feedback}"
+            f"{dialogue_block}\n\n"
+            f"请给出 {state.days} 天带时刻表的逐天景点安排。"
         )
         result: TravelRoute = invoke_structured(llm, [("system", PLANNER_SYSTEM), ("human", prompt)])
         route = [d.model_dump() for d in result.days]
         rnd = state.review_round + 1
         note = f"[第{rnd}轮] Planner 出稿：{result.notes or '(无说明)'}"
-        return {"route": route, "review_round": rnd, "history": state.history + [note]}
+        planner_line = f"[第{rnd}轮] Planner：{result.notes or '(无说明)'}"
+        return {
+            "route": route,
+            "review_round": rnd,
+            "history": state.history + [note],
+            "planner_reviewer_dialogue": state.planner_reviewer_dialogue + [planner_line],
+        }
 
     return planner
 
@@ -188,24 +205,42 @@ def make_reviewer_node(model_name: str | None):
             if weather_text else "\n（无天气信息）\n"
         )
 
+        # 历轮沟通记录：让 Reviewer 知道自己之前提过哪些紧急问题、是否已被修复
+        dialogue_block = ""
+        if state.planner_reviewer_dialogue:
+            dialogue_text = "\n".join(state.planner_reviewer_dialogue)
+            dialogue_block = (
+                f"\n\n【历轮沟通记录（检查你之前标注的【紧急必须优先改】是否已被修复；"
+                f"未修复则继续标注紧急，已修复则审查新问题）】\n{dialogue_text}"
+            )
+
         prompt = (
             f"目的地：{state.destination}，共 {state.days} 天，每天上限 {state.max_per_day}。\n"
             f"用户游玩习惯：{state.habit_preference or '无'}"
             f"{weather_block}\n"
             f"候选景点池：\n{format_spots_for_llm(state.pois)}\n\n"
             f"待评审路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
-            f"系统客观预检（请据此判断）：\n{facts}\n\n请评审并给出结论。"
+            f"系统客观预检（请据此判断）：\n{facts}"
+            f"{dialogue_block}\n\n请评审并给出结论。"
         )
         result: RouteReview = invoke_structured(llm, [("system", REVIEWER_SYSTEM), ("human", prompt)])
         approved = result.approved and not bad_unknown
         verdict  = "✅通过" if approved else "❌打回"
         note = f"[第{state.review_round}轮] Reviewer {verdict}（{result.score}分）：{result.route_modify_opinion[:50]}"
+
+        # 追加本轮 Reviewer 记录到共享对话
+        issues_str = "；".join(result.issues[:3]) if result.issues else result.route_modify_opinion[:80]
+        reviewer_line = (
+            f"[第{state.review_round}轮] Reviewer {'通过' if approved else '打回'}"
+            f"（{result.score}分）：{issues_str or '(无意见)'}"
+        )
         return {
             "approved": approved,
             "need_modify_route": not approved,
             "route_modify_opinion": result.route_modify_opinion,
-            "reviewer_issues": result.issues,   # 每轮覆盖，最终保存最后一轮的问题
+            "reviewer_issues": result.issues,
             "history": state.history + [note],
+            "planner_reviewer_dialogue": state.planner_reviewer_dialogue + [reviewer_line],
         }
 
     return reviewer

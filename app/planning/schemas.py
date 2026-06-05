@@ -108,6 +108,8 @@ class TravelPlanState(BaseModel):
     review_round: int = 0
     approved: bool = False
     history: list[str] = Field(default_factory=list)
+    # Planner 与 Reviewer 的共享对话记忆（每轮追加，两者均可读）
+    planner_reviewer_dialogue: list[str] = Field(default_factory=list)
 
     # 天气（意图识别后拉取）
     weather_forecast: list[dict[str, Any]] = Field(default_factory=list)
