@@ -1,6 +1,7 @@
 .env.local
 todos.md
 tests/
+CLAUDE.md
 __pycache__/
 *.py[cod]
 *.pyc
