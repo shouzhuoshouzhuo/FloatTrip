@@ -118,9 +118,9 @@ function mealCardInner(item) {
   const card = document.createElement('div');
   card.className = `card meal-card ${item.type}`;
 
-  let extras = '';
-  if (item.reason)          extras += `<div class="reason-box">${escHtml(item.reason)}</div>`;
-  if (item.fallback_reason) extras += `<div class="fallback-box">${escHtml(item.fallback_reason)}</div>`;
+  const extras = item.reason
+    ? `<div class="reason-box">${escHtml(item.reason)}</div>`
+    : '';
 
   card.innerHTML = `
     ${makeImg(item.photo, item.name)}

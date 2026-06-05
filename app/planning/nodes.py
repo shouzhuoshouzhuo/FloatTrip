@@ -9,9 +9,10 @@ from typing import Any
 from app.llm.deepseek import build_structured_deepseek
 from app.providers.amap.poi import search_around_pois
 from app.planning.schemas import (
+    DayMealPick,
     IntentExtraction,
-    MealRecommendation,
     RouteReview,
+    SingleDayMealPick,
     TravelPlanState,
     TravelRoute,
 )
@@ -287,10 +288,17 @@ def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
 # ─── 餐厅推荐 ────────────────────────────────────────────────
 
 def make_meal_recommend_node(model_name: str | None):
-    llm = build_structured_deepseek(MealRecommendation, model=model_name, temperature=0)
+    from concurrent.futures import ThreadPoolExecutor
+
+    llm = build_structured_deepseek(SingleDayMealPick, model=model_name, temperature=0)
 
     def meal_recommend(state: TravelPlanState) -> dict[str, Any]:
-        def fmt(cands: list[dict[str, Any]]) -> str:
+
+        def _top(cands: list[dict[str, Any]], n: int = 10) -> list[dict[str, Any]]:
+            """按评分降序取前 n 家，减少喂给 LLM 的 token。"""
+            return sorted(cands, key=lambda c: -(c.get("rating") or 0))[:n]
+
+        def _fmt(cands: list[dict[str, Any]]) -> str:
             if not cands:
                 return "（无候选）"
             return "\n".join(
@@ -299,38 +307,53 @@ def make_meal_recommend_node(model_name: str | None):
                 for c in cands
             )
 
-        blocks = []
-        for entry in state.meal_candidates:
-            blocks.append(
-                f"Day {entry['day']}\n 午餐候选（{entry['lunch'].get('anchor')} 周边）：\n"
-                f"{fmt(entry['lunch'].get('candidates', []))}\n"
-                f" 晚餐候选（{entry['dinner'].get('anchor')} 周边）：\n"
-                f"{fmt(entry['dinner'].get('candidates', []))}"
+        def _recommend_day(entry: dict[str, Any]) -> DayMealPick:
+            """单天 LLM 调用；失败时取评分最高的餐厅降级兜底。"""
+            lunch_cands  = _top(entry["lunch"].get("candidates", []))
+            dinner_cands = _top(entry["dinner"].get("candidates", []))
+            prompt = (
+                f"第 {entry['day']} 天 | 用户用餐偏好：{state.food_preference or '无特别偏好'}\n\n"
+                f"午餐候选（{entry['lunch'].get('anchor')} 周边）：\n{_fmt(lunch_cands)}\n\n"
+                f"晚餐候选（{entry['dinner'].get('anchor')} 周边）：\n{_fmt(dinner_cands)}\n\n"
+                "请选出今天的午餐和晚餐。"
             )
-        prompt = (
-            f"用户用餐偏好：{state.food_preference or '无特别偏好'}\n\n"
-            + "\n\n".join(blocks)
-            + "\n\n请为每天选出午餐和晚餐。"
-        )
-        result: MealRecommendation = invoke_structured(
-            llm, [("system", MEAL_SYSTEM), ("human", prompt)], retries=5
-        )
+            try:
+                r: SingleDayMealPick = invoke_structured(
+                    llm, [("system", MEAL_SYSTEM), ("human", prompt)], retries=5
+                )
+                return DayMealPick(day=entry["day"], **r.model_dump())
+            except RuntimeError:
+                def best(cands: list) -> str:
+                    return cands[0]["name"] if cands else ""
+                return DayMealPick(
+                    day=entry["day"],
+                    lunch_name=best(lunch_cands),
+                    lunch_reason="（系统自动选取评分最高餐厅）",
+                    dinner_name=best(dinner_cands),
+                    dinner_reason="（系统自动选取评分最高餐厅）",
+                )
 
-        pick_map = {p.day: p for p in result.picks}
+        # 不同天并行调用 LLM
+        with ThreadPoolExecutor(max_workers=max(1, len(state.meal_candidates))) as ex:
+            day_picks: list[DayMealPick] = list(
+                ex.map(_recommend_day, state.meal_candidates)
+            )
+
+        pick_map = {p.day: p for p in day_picks}
         meals: list[dict[str, Any]] = []
         for entry in state.meal_candidates:
-            pick        = pick_map.get(entry["day"])
-            lunch_cands = {c["name"]: c for c in entry["lunch"].get("candidates", [])}
+            pick         = pick_map.get(entry["day"])
+            lunch_cands  = {c["name"]: c for c in entry["lunch"].get("candidates", [])}
             dinner_cands = {c["name"]: c for c in entry["dinner"].get("candidates", [])}
-            lunch_info  = lunch_cands.get(pick.lunch_name) if pick else None
-            dinner_info = dinner_cands.get(pick.dinner_name) if pick else None
+            lunch_info   = lunch_cands.get(pick.lunch_name)  if pick else None
+            dinner_info  = dinner_cands.get(pick.dinner_name) if pick else None
 
             if lunch_info is not None:
-                lunch_info = {**lunch_info, "reason": pick.lunch_reason, "fallback_reason": pick.lunch_fallback_reason}
+                lunch_info  = {**lunch_info,  "reason": pick.lunch_reason}
             if dinner_info is not None:
-                dinner_info = {**dinner_info, "reason": pick.dinner_reason, "fallback_reason": pick.dinner_fallback_reason}
+                dinner_info = {**dinner_info, "reason": pick.dinner_reason}
 
-            # 确定性兜底：午/晚餐重复时换一家
+            # 确定性兜底：午/晚餐重复时换评分次高的一家
             if (lunch_info is not None and dinner_info is not None
                     and pick and pick.lunch_name == pick.dinner_name):
                 alt = next(
@@ -341,15 +364,11 @@ def make_meal_recommend_node(model_name: str | None):
                     None,
                 )
                 if alt:
-                    dinner_info = {**alt,
-                                   "reason": f"（系统调整：避免与午餐重复，改选 {alt['name']}）",
-                                   "fallback_reason": pick.dinner_fallback_reason or ""}
+                    dinner_info = {**alt, "reason": f"（系统调整：避免与午餐重复，改选 {alt['name']}）"}
                 else:
                     dinner_info = {**dinner_info,
-                                   "fallback_reason": (
-                                       (dinner_info.get("fallback_reason") or "")
-                                       + "⚠️ 该区域高德数据中仅此一家餐厅，午晚餐相同；出行前请提前确认周边餐饮情况。"
-                                   ).strip()}
+                                   "reason": (dinner_info.get("reason") or "")
+                                   + " ⚠️ 该区域仅此一家餐厅，午晚餐相同，出行前请确认周边餐饮。"}
 
             meals.append({"day": entry["day"], "lunch": lunch_info, "dinner": dinner_info})
 

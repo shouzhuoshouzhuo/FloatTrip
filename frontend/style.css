@@ -302,17 +302,6 @@ main {
 }
 .reason-box::before { content: '💬 '; }
 
-.fallback-box {
-  margin-top: 8px;
-  background: #fff3e0;
-  border-radius: 8px;
-  padding: 9px 12px;
-  font-size: .82rem;
-  color: #a07800;
-  line-height: 1.5;
-}
-.fallback-box::before { content: '⚠️ 降级：'; }
-
 /* ─── 无餐厅提醒卡 ─────────────────────────────── */
 .no-restaurant-card {
   border-left: 4px solid #ccc;

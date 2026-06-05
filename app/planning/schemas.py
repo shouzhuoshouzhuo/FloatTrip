@@ -57,22 +57,23 @@ class RouteReview(BaseModel):
     route_modify_opinion: str = Field(default="", description="给 Planner 的修改意见；approved=true 时可空")
 
 
+class SingleDayMealPick(BaseModel):
+    """单天午/晚餐选择（LLM 输出，不含 day 字段，由调用方注入）。"""
+
+    lunch_name: str = Field(description="午餐餐厅名，严格复制候选列表写法；无合适则空字符串")
+    lunch_reason: str = Field(default="", description="午餐推荐/降级理由，1-2句；若无符合偏好的餐厅，在此说明降级原因")
+    dinner_name: str = Field(description="晚餐餐厅名，严格复制候选列表写法；无合适则空字符串")
+    dinner_reason: str = Field(default="", description="晚餐推荐/降级理由，1-2句；若无符合偏好的餐厅，在此说明降级原因")
+
+
 class DayMealPick(BaseModel):
-    """单天的午/晚餐选择（餐厅名必须来自候选餐厅列表）。"""
+    """单天午/晚餐选择（含 day，流水线内部流转用）。"""
 
     day: int = Field(description="第几天")
-    lunch_name: str = Field(description="午餐餐厅名，来自该天候选餐厅；无合适则空字符串")
-    lunch_reason: str = Field(default="", description="午餐推荐理由")
-    lunch_fallback_reason: str = Field(default="", description="午餐降级理由；满足偏好时返回空字符串")
-    dinner_name: str = Field(description="晚餐餐厅名，来自该天候选餐厅；无合适则空字符串")
-    dinner_reason: str = Field(default="", description="晚餐推荐理由")
-    dinner_fallback_reason: str = Field(default="", description="晚餐降级理由；满足偏好时返回空字符串")
-
-
-class MealRecommendation(BaseModel):
-    """餐厅推荐 Agent 的逐天选择。"""
-
-    picks: list[DayMealPick] = Field(description="逐天午/晚餐选择")
+    lunch_name: str = Field(default="", description="午餐餐厅名")
+    lunch_reason: str = Field(default="", description="午餐推荐/降级理由")
+    dinner_name: str = Field(default="", description="晚餐餐厅名")
+    dinner_reason: str = Field(default="", description="晚餐推荐/降级理由")
 
 
 # ─── LangGraph 状态 ───────────────────────────────────────────
