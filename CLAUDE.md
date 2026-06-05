@@ -37,13 +37,13 @@ START → intent ──(缺目的地/日期)──→ END
 
 - **intent**：抽取目的地/日期/偏好；`travel_days` 字段支持从"3日游"推算结束日期；日期确定后自动拉取高德天气预报（`app/providers/weather/amap.py`，约 4 天，超范围降级处理）；缺字段时写入 `missing_fields` 并提前终止。
 - **attraction_search**：高德关键字搜索，按 `min_rating` 过滤，构建**封闭候选池**——后续所有 Agent 只能引用池内景点名。
-- **planner ⇄ reviewer 循环**：Planner 生成带时刻表的路线时需考虑天气（雨雪天优先室内景点）；Reviewer 基于 Python 预计算的客观事实（地理跨度、开放时间、候选池校验）+ 天气评审，`unknown_spots` 硬性打回。循环上限 `max_review_rounds`，最后一轮 issues 写入 `state.reviewer_issues`。
-- **meal_search → meal_recommend**：以每天最后一个上午/下午景点为中心搜周边餐厅，LLM 选午晚餐；午晚餐重复时有确定性兜底逻辑（`nodes.py`）。
+- **planner ⇄ reviewer 循环**：Planner 生成带时刻表的路线时需考虑天气（雨雪天优先室内景点）；Reviewer 基于 Python 预计算的客观事实（地理跨度、开放时间、候选池校验）+ 天气评审，`unknown_spots` 硬性打回。循环上限 `max_review_rounds`，最后一轮 issues 写入 `state.reviewer_issues`。两者共享 `planner_reviewer_dialogue`（每轮追加一行），Reviewer 凭此记住自己之前标注的【紧急必须优先改】是否已被响应。
+- **meal_search → meal_recommend**：以每天最后一个上午/下午景点为中心搜周边餐厅（最多 20 家存入 state）；recommend 阶段按评分截取 top 10，**每天独立调用一次 LLM**（schema `SingleDayMealPick`，4 字段），不同天用 `ThreadPoolExecutor` 并行；单天失败时降级取评分最高餐厅，午晚餐重复时有确定性兜底逻辑。
 - **finalize**：拼装 `final_plan`，插入餐厅、照片、开放时间、haversine 距离，以及 `weather_forecast`、`weather_note`、`route_issues`。
 
 ### 重要约定
 
-- **LLM 调用必须走 `invoke_structured`**（`helpers.py`）：DeepSeek function calling 偶发返回 `None`，该函数自动重试，避免 `AttributeError`。
+- **LLM 调用必须走 `invoke_structured`**（`helpers.py`）：DeepSeek function calling 偶发返回 `None`，该函数自动重试，避免 `AttributeError`。meal_recommend 在此基础上额外加了 try/except 确定性降级。
 - **景点匹配用名称字符串**，不用对象引用——LangGraph 序列化后对象 identity 失效。
 - **Prompt 集中在 `prompts.py`**，Agent 行为逻辑在 prompt 和节点代码中各占一半，修改时两处要同步。
 - 调参入口：`PlanRequest` 的 `max_per_day`、`min_rating`、`max_spots`、`max_review_rounds`、`model_name`，通过 `**overrides` 注入 `TravelPlanState`。
