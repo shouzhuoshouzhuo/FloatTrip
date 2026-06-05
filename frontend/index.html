@@ -5,20 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI 旅游规划助手</title>
   <link rel="stylesheet" href="/style.css" />
+  <script src="https://webapi.amap.com/loader.js"></script>
 </head>
 <body>
 
 <header>
-  <h1>✈️ AI 旅游规划助手</h1>
-  <p>由 LangGraph 多 Agent 流水线驱动</p>
+  <div class="brand">
+    <span class="brand-mark">✈️</span>
+    <span class="brand-text">
+      AI 旅游规划助手
+      <small>LangGraph 多 Agent · DeepSeek · 高德地图</small>
+    </span>
+  </div>
+  <div class="header-spacer"></div>
 </header>
 
-<main>
-  <!-- 输入区 -->
+<div class="shell">
+
+  <!-- 查询条 -->
   <section id="query-section">
-    <label for="query-input">描述你的旅行需求（含目的地、日期、偏好）</label>
-    <textarea id="query-input" placeholder="例如：南京 2026-06-10 到 2026-06-12 三天，喜欢历史古迹，想吃本地小吃，慢节奏"></textarea>
-    <button id="submit-btn">开始规划</button>
+    <div class="qb-field">
+      <label for="query-input">描述你的旅行需求（含目的地、日期、偏好）</label>
+      <textarea id="query-input" placeholder="例如：南京 2026-06-10 到 2026-06-12 三天，喜欢历史古迹，想吃本地小吃，慢节奏"></textarea>
+    </div>
+    <button id="submit-btn">✨ 开始规划</button>
   </section>
 
   <!-- Loading -->
@@ -35,22 +45,45 @@
 
   <!-- 结果 -->
   <section id="result-section">
-    <div class="plan-header">
-      <div class="plan-title" id="plan-title"></div>
-      <div class="plan-dates" id="plan-dates"></div>
-      <div class="plan-badges" id="plan-badges"></div>
+    <div class="result-grid">
+
+      <!-- 左列：行程 -->
+      <div class="itinerary">
+
+        <div class="plan-header">
+          <div class="plan-eyebrow">行程总览</div>
+          <div class="plan-title" id="plan-title"></div>
+          <div class="plan-dates" id="plan-dates"></div>
+          <div class="plan-badges" id="plan-badges"></div>
+        </div>
+
+        <!-- 天气降级 banner 由 JS 注入到 .plan-header 之后 -->
+
+        <div class="day-tabs" id="day-tabs"></div>
+        <div class="day-theme" id="day-theme"></div>
+        <div class="timeline" id="timeline"></div>
+
+        <!-- 路线问题卡由 JS 注入到 #history-details 之前 -->
+
+        <details class="history-details" id="history-details">
+          <summary>规划过程日志</summary>
+          <ul class="history-list" id="history-list"></ul>
+        </details>
+
+      </div>
+
+      <!-- 右列：半屏大地图 -->
+      <div class="map-col">
+        <div class="map-frame">
+          <div id="day-map"></div>
+          <div class="day-map-empty" id="day-map-empty">本日暂无可定位的地点</div>
+        </div>
+      </div>
+
     </div>
-
-    <div class="day-tabs" id="day-tabs"></div>
-    <div class="day-theme" id="day-theme"></div>
-    <div class="timeline" id="timeline"></div>
-
-    <details class="history-details" id="history-details">
-      <summary>规划过程日志</summary>
-      <ul class="history-list" id="history-list"></ul>
-    </details>
   </section>
-</main>
+
+</div>
 
 <script src="/app.js"></script>
 </body>

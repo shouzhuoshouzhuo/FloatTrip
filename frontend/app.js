@@ -42,19 +42,9 @@ function starRating(r) {
 
 function makeImg(url, alt) {
   if (!url) {
-    return `<div class="card-photo-placeholder">🖼</div>`;
+    return `<div class="thumb thumb-placeholder" aria-label="${escHtml(alt)}">🖼</div>`;
   }
-  // 用占位 div 兜底，图片加载失败时替换
-  const id = 'img_' + Math.random().toString(36).slice(2);
-  return `
-    <div id="${id}_wrap">
-      <img class="card-photo"
-           src="${escHtml(url)}"
-           alt="${escHtml(alt)}"
-           id="${id}"
-           loading="lazy"
-           onerror="this.parentNode.innerHTML='<div class=\\'card-photo-placeholder\\'>🖼</div>'" />
-    </div>`;
+  return `<div class="thumb" style="background-image:url('${escHtml(url)}')" aria-label="${escHtml(alt)}"></div>`;
 }
 
 function escHtml(str) {
@@ -297,6 +287,7 @@ function switchDay(i) {
   document.getElementById('day-theme').textContent =
     day.theme ? `📅 ${day.date || ''}  ${day.theme}` : (day.date || '');
   buildTimeline(day.timeline);
+  renderDayMap(day);
 }
 
 /* ─── 渲染计划头部 ─────────────────────────────── */
@@ -439,3 +430,135 @@ queryInput.addEventListener('keydown', (e) => {
     submitBtn.click();
   }
 });
+
+/* ─── 高德地图：每日动线可视化 ─────────────────── */
+let amapConfig    = null;
+let amapPromise   = null;
+let mapInstance   = null;
+let mapOverlays   = [];
+let mapInfoWindow = null;
+
+async function loadAmapConfig() {
+  if (amapConfig) return amapConfig;
+  try { amapConfig = await fetch('/api/config').then(r => r.json()); }
+  catch { amapConfig = { amap_js_key: '', amap_js_security_code: '' }; }
+  return amapConfig;
+}
+
+function ensureAMap() {
+  if (amapPromise) return amapPromise;
+  amapPromise = (async () => {
+    const cfg = await loadAmapConfig();
+    if (!cfg.amap_js_key) throw new Error('未配置 AMAP_JS_KEY');
+    if (cfg.amap_js_security_code)
+      window._AMapSecurityConfig = { securityJsCode: cfg.amap_js_security_code };
+    return AMapLoader.load({
+      key: cfg.amap_js_key, version: '2.0',
+      plugins: ['AMap.Marker', 'AMap.Polyline', 'AMap.InfoWindow'],
+    });
+  })();
+  return amapPromise;
+}
+
+function showMapEmpty(msg) {
+  const mapEl = document.getElementById('day-map');
+  const empty = document.getElementById('day-map-empty');
+  if (mapEl) mapEl.style.display = 'none';
+  if (empty) {
+    empty.style.display = 'flex';
+    if (msg && msg !== false) empty.textContent = msg;
+  }
+}
+
+function mapInfoContent(item) {
+  const photoHtml = item.photo
+    ? `<img class="map-info-photo" src="${escHtml(item.photo)}" alt="${escHtml(item.name||'')}"
+           onerror="this.outerHTML='<div class=\\'map-info-photo-placeholder\\'>🖼</div>'">`
+    : `<div class="map-info-photo-placeholder">🖼</div>`;
+  let meta = '';
+  if (item.type === 'attraction') {
+    const p  = periodInfo(item.period);
+    const tr = (item.start_time && item.end_time)
+      ? `🕐 ${escHtml(item.start_time)} – ${escHtml(item.end_time)}` : '';
+    meta = `
+      <div class="map-info-meta">
+        <span class="period-badge ${p.cls}">${p.icon} ${p.label}</span>
+        ${tr ? `<span>${tr}</span>` : ''}
+        ${item.rating != null ? `<span>${starRating(item.rating)}</span>` : ''}
+      </div>
+      ${item.open_time ? `<div class="map-info-sub">🕒 ${escHtml(item.open_time)}</div>` : ''}`;
+  } else {
+    const lbl = item.type === 'lunch' ? '🍜 午餐' : '🍽 晚餐';
+    meta = `
+      <div class="map-info-meta">
+        <span class="meal-type-label">${lbl}</span>
+        ${item.rating != null ? `<span>${starRating(item.rating)}</span>` : ''}
+        ${item.cost ? `<span>💰 ¥${escHtml(item.cost)}/人</span>` : ''}
+      </div>
+      ${item.address ? `<div class="map-info-sub">📍 ${escHtml(item.address)}</div>` : ''}
+      ${item.reason  ? `<div class="map-info-reason">${escHtml(item.reason)}</div>` : ''}`;
+  }
+  return `<div class="map-info">${photoHtml}
+    <div class="map-info-body">
+      <div class="map-info-title">${escHtml(item.name||'—')}</div>
+      ${meta}
+    </div></div>`;
+}
+
+function markerContent(index, isAttraction) {
+  return `<div class="map-pin ${isAttraction ? 'map-pin-attraction' : 'map-pin-meal'}">${index}</div>`;
+}
+
+async function renderDayMap(day) {
+  const points = (day.timeline || []).filter(
+    it => it.location && it.location.lng != null && it.location.lat != null
+  );
+  if (points.length === 0) { showMapEmpty('本日暂无可定位的地点'); return; }
+
+  let AMap;
+  try { AMap = await ensureAMap(); }
+  catch { showMapEmpty(false); return; }
+
+  try {
+    const mapEl = document.getElementById('day-map');
+    const empty = document.getElementById('day-map-empty');
+    if (mapEl) mapEl.style.display = 'block';
+    if (empty) empty.style.display = 'none';
+
+    if (!mapInstance) {
+      mapInstance   = new AMap.Map('day-map', { zoom: 12 });
+      mapInfoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -32), autoMove: true });
+    }
+    if (mapOverlays.length) { mapInstance.remove(mapOverlays); mapOverlays = []; }
+    mapInfoWindow.close();
+
+    const path = [];
+    points.forEach((item, i) => {
+      const pos = [item.location.lng, item.location.lat];
+      path.push(pos);
+      const marker = new AMap.Marker({
+        position: pos,
+        content: markerContent(i + 1, item.type === 'attraction'),
+        offset: new AMap.Pixel(-14, -14),
+        zIndex: 100 + i,
+      });
+      marker.on('click', () => {
+        mapInfoWindow.setContent(mapInfoContent(item));
+        mapInfoWindow.open(mapInstance, pos);
+      });
+      mapOverlays.push(marker);
+    });
+
+    if (path.length >= 2) {
+      const poly = new AMap.Polyline({
+        path, strokeColor: '#2e9898', strokeWeight: 4,
+        strokeOpacity: 0.85, strokeStyle: 'solid',
+        showDir: true, lineJoin: 'round',
+      });
+      mapOverlays.push(poly);
+    }
+
+    mapInstance.add(mapOverlays);
+    mapInstance.setFitView(mapOverlays, false, [40, 40, 40, 40]);
+  } catch { showMapEmpty('地图加载失败，已为你保留行程清单'); }
+}
