@@ -28,7 +28,7 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 
 所有景点与餐厅数据均来自**高德真实 POI**，不会凭空捏造地点。
 
-> 🧪 **这个项目有评测体系**：基于 Anthropic《Demystifying Evals for AI Agents》方法论，对核心 Agent（Planner / Reviewer）建立了可复现的定量评估框架，包括代码打分器 G1–G7 + LLM 评委 + Reviewer 可靠性指标，指标覆盖 pass@k、pass^k、收敛轮次、误放行率、planner 反驳率。详见 [`tests/EVAL_GUIDE.md`](tests/EVAL_GUIDE.md)。
+> 🧪 **这个项目有Agent评测体系**：基于 Anthropic《Demystifying Evals for AI Agents》方法论，对核心 Agent（Planner / Reviewer）建立了可复现的定量评估框架，包括代码打分器 G1–G7 + LLM 评委 + Reviewer 可靠性指标，指标覆盖 pass@k、pass^k、收敛轮次、误放行率、planner 反驳率。详见 [`tests/EVAL_GUIDE.md`](tests/EVAL_GUIDE.md)。
 
 ---
 
