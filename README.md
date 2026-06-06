@@ -4,11 +4,12 @@
 
 **一句话描述需求，自动生成带时刻表的多日旅游计划**
 
-[Python](https://www.python.org/)
-[FastAPI](https://fastapi.tiangolo.com/)
-[LangGraph](https://github.com/langchain-ai/langgraph)
-[License: MIT](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.2+-FF6B35)](https://github.com/langchain-ai/langgraph)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+</div>
 
 
 ---
@@ -32,7 +33,9 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 
 > 输入：`明天开始南京3日游，我要吃本地菜`
 
-
+<p align="center">
+  <img src="./static/images/image copy 2.png" alt="AI 旅游规划助手界面演示" width="900" />
+</p>
 
 ---
 
