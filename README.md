@@ -1,15 +1,15 @@
-<div align="center">
+
 
 # ✈️ AI 旅游规划助手
 
 **一句话描述需求，自动生成带时刻表的多日旅游计划**
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-1.2+-FF6B35)](https://github.com/langchain-ai/langgraph)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[Python](https://www.python.org/)
+[FastAPI](https://fastapi.tiangolo.com/)
+[LangGraph](https://github.com/langchain-ai/langgraph)
+[License: MIT](LICENSE)
 
-</div>
+
 
 ---
 
@@ -22,6 +22,7 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 - 🗺️ **景点搜索** — 调用高德地图 API 获取真实景点候选池，按评分过滤
 - 🧭 **智能规划** — Planner/Reviewer 多轮循环优化，共享对话记忆确保紧急问题优先修复
 - 🍜 **餐饮推荐** — 基于每天动线搜索周边餐厅，按天并行调用 LLM 推荐午晚餐
+- 🗺️ **地图可视化** — 前端接入高德 JS API，在半屏地图上逐天绘制行程动线与景点标注
 
 所有景点与餐厅数据均来自**高德真实 POI**，不会凭空捏造地点。
 
@@ -29,11 +30,9 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 
 ## 🎬 演示
 
-> 输入：`我要去景德镇3日游，喜欢陶艺，喜欢吃江西辣菜，喜欢夜景，不喜欢早起 6月5日到6月7日`
+> 输入：`明天开始南京3日游，我要吃本地菜`
 
-<p align="center">
-  <img src="./image.png" alt="AI 旅游规划助手界面演示" width="900" />
-</p>
+
 
 ---
 
@@ -66,13 +65,15 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 
 **技术栈**
 
-| 层 | 技术 |
-|---|---|
-| 后端框架 | FastAPI + Uvicorn |
-| Agent 编排 | LangGraph |
-| LLM | DeepSeek（通过 LangChain OpenAI 兼容层） |
-| 地图数据 | 高德地图 Web 服务 API |
-| 前端 | 原生 HTML / CSS / JavaScript |
+
+| 层        | 技术                                |
+| -------- | --------------------------------- |
+| 后端框架     | FastAPI + Uvicorn                 |
+| Agent 编排 | LangGraph                         |
+| LLM      | DeepSeek（通过 LangChain OpenAI 兼容层） |
+| 地图数据     | 高德地图 Web 服务 API                   |
+| 前端       | 原生 HTML / CSS / JavaScript        |
+
 
 ---
 
@@ -100,12 +101,16 @@ cp .env.example .env.local
 编辑 `.env.local`，填入你的 API Key：
 
 ```env
-AMAP_API_KEY=your_amap_key        # 高德 Web 服务 Key（免费申请）
-DEEPSEEK_API_KEY=your_deepseek_key # DeepSeek API Key
+AMAP_API_KEY=your_amap_key             # 高德 Web 服务 Key（必填，景点/天气）
+DEEPSEEK_API_KEY=your_deepseek_key     # DeepSeek API Key（必填）
+AMAP_JS_KEY=your_amap_js_key           # 高德 JS API Key（可选，前端地图）
+AMAP_JS_SECURITY_CODE=your_js_secret   # 高德 JS API 安全密钥（可选，与 JS Key 配套）
 ```
 
 > **如何获取 Key？**
-> - 高德 Key：登录 [高德开放平台](https://lbs.amap.com/) → 控制台 → 创建应用 → 添加 Web 服务 Key
+>
+> - 高德 Web 服务 Key：登录 [高德开放平台](https://lbs.amap.com/) → 控制台 → 创建应用 → 添加 **Web 服务** Key
+> - 高德 JS API Key：同一应用下再添加一个 **Web 端 (JS API)** Key，并配置安全密钥 `securityJsCode`（前端地图可视化用，不填则地图区域降级提示）
 > - DeepSeek Key：登录 [DeepSeek 开放平台](https://platform.deepseek.com/) → API Keys
 
 ### 4. 启动服务
@@ -114,7 +119,7 @@ DEEPSEEK_API_KEY=your_deepseek_key # DeepSeek API Key
 python run.py
 ```
 
-打开浏览器访问 **http://localhost:8765**，输入出行需求即可。
+打开浏览器访问 **[http://localhost:8765](http://localhost:8765)**，输入出行需求即可。
 
 ---
 
@@ -122,13 +127,15 @@ python run.py
 
 `POST /api/plan` 接口支持以下参数：
 
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `query` | string | 必填 | 一句话出行需求 |
-| `max_per_day` | int | 3 | 每天最多景点数 |
-| `min_rating` | float | 4.5 | 景点最低评分门槛 |
-| `max_spots` | int | 30 | 候选景点池大小 |
-| `max_review_rounds` | int | 3 | Planner-Reviewer 最大循环轮数 |
+
+| 参数                  | 类型     | 默认值 | 说明                      |
+| ------------------- | ------ | --- | ----------------------- |
+| `query`             | string | 必填  | 一句话出行需求                 |
+| `max_per_day`       | int    | 3   | 每天最多景点数                 |
+| `min_rating`        | float  | 4.5 | 景点最低评分门槛                |
+| `max_spots`         | int    | 30  | 候选景点池大小                 |
+| `max_review_rounds` | int    | 3   | Planner-Reviewer 最大循环轮数 |
+
 
 ---
 
@@ -173,6 +180,9 @@ Intent 阶段自动拉取高德天气预报（复用已有 `AMAP_API_KEY`），�
 
 **6. 结构化输出防护**
 所有 LLM 调用通过 `invoke_structured` 包装，对 DeepSeek function calling 偶发返回 `None` 的情况自动重试，保证流水线稳定。
+
+**7. 前端地图动线可视化**
+后端通过 `GET /api/config` 仅向前端下发高德 **JS API** 密钥（不暴露敏感的 REST `AMAP_API_KEY`），前端按天用高德地图绘制景点标注与连线动线，地图占据半屏，未配置 JS Key 时地图区域降级为友好提示，不影响行程文本展示。
 
 ---
 
