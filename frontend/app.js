@@ -388,7 +388,48 @@ function showError(missingFields) {
   showSection('error');
 }
 
-/* ─── 提交 ─────────────────────────────────────── */
+/* ─── 实时阶段清单 ─────────────────────────────── */
+function resetProgress() {
+  const box = document.getElementById('progress-steps');
+  if (box) box.innerHTML = '';
+}
+
+/* 收到一条 stage 事件：把上一条标记为完成，追加当前进行中的一条 */
+function appendProgressStep(ev) {
+  const box = document.getElementById('progress-steps');
+  if (!box) return;
+
+  const active = box.querySelector('.progress-step.active');
+  if (active) {
+    active.classList.remove('active');
+    active.classList.add('done');
+    const icon = active.querySelector('.step-icon');
+    if (icon) icon.textContent = '✓';
+  }
+
+  const step = document.createElement('div');
+  step.className = 'progress-step active';
+  step.innerHTML =
+    `<span class="step-icon"><span class="step-spinner"></span></span>` +
+    `<span class="step-label"></span>`;
+  step.querySelector('.step-label').textContent = ev.label || ev.node || '处理中…';
+  box.appendChild(step);
+}
+
+/* 全部完成：最后一条也打勾 */
+function finishProgress() {
+  const box = document.getElementById('progress-steps');
+  if (!box) return;
+  const active = box.querySelector('.progress-step.active');
+  if (active) {
+    active.classList.remove('active');
+    active.classList.add('done');
+    const icon = active.querySelector('.step-icon');
+    if (icon) icon.textContent = '✓';
+  }
+}
+
+/* ─── 提交（SSE 流式）──────────────────────────── */
 submitBtn.addEventListener('click', async () => {
   const query = queryInput.value.trim();
   if (!query) {
@@ -397,25 +438,67 @@ submitBtn.addEventListener('click', async () => {
   }
 
   submitBtn.disabled = true;
+  resetProgress();
   showSection('loading');
 
   try {
-    const res = await fetch('/api/plan', {
+    const res = await fetch('/api/plan/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
     });
 
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       throw new Error(`服务器错误 ${res.status}`);
     }
 
-    const data = await res.json();
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let settled = false;
 
-    if (!data.success) {
-      showError(data.missing_fields || ['未知错误，请检查输入']);
-    } else {
-      renderPlan(data);
+    // 处理一条 SSE 事件（已剥离 data: 前缀的 JSON 文本）
+    const handle = (payload) => {
+      let ev;
+      try { ev = JSON.parse(payload); } catch { return; }
+
+      if (ev.type === 'stage') {
+        appendProgressStep(ev);
+      } else if (ev.type === 'result') {
+        settled = true;
+        finishProgress();
+        if (!ev.success) {
+          showError(ev.missing_fields || ['未知错误，请检查输入']);
+        } else {
+          renderPlan(ev);
+        }
+      } else if (ev.type === 'error') {
+        settled = true;
+        showError([`规划失败：${ev.message || '未知错误'}`]);
+      }
+    };
+
+    // 逐 chunk 读取，按 SSE 帧（\n\n 分隔）解析
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sep;
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        for (const line of frame.split('\n')) {
+          const trimmed = line.replace(/\r$/, '');
+          if (trimmed.startsWith('data:')) {
+            handle(trimmed.slice(5).trim());
+          }
+        }
+      }
+    }
+
+    if (!settled) {
+      showError(['连接已中断，请重试']);
     }
   } catch (err) {
     showError([`请求失败：${err.message}`]);

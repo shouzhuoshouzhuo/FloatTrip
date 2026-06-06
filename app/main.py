@@ -9,17 +9,19 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.core.env import load_local_env
 from app.planning.graph import run as run_plan
+from app.planning.graph import run_stream as run_plan_stream
 
 load_local_env()
 
@@ -77,6 +79,35 @@ def create_plan(req: PlanRequest):
         "history": state.history,
         "plan": state.final_plan if success else None,
     }
+
+
+@app.post("/api/plan/stream")
+async def create_plan_stream(req: PlanRequest):
+    """分阶段 SSE：逐节点推送进度，末帧推送完整 plan（前端复用 renderPlan）。"""
+
+    async def gen():
+        try:
+            async for ev in run_plan_stream(
+                req.query,
+                max_per_day=req.max_per_day,
+                min_rating=req.min_rating,
+                max_spots=req.max_spots,
+                max_review_rounds=req.max_review_rounds,
+            ):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except Exception as e:  # noqa: BLE001 — 兜底为前端可见的错误事件
+            err = {"type": "error", "message": str(e)}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ─── 静态文件（前端）—— 必须在 API 路由之后挂载 ─────────────

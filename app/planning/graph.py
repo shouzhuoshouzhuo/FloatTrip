@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncIterator
 
 from langgraph.graph import END, START, StateGraph
 
@@ -76,3 +76,74 @@ def run(query: str, **overrides: Any) -> TravelPlanState:
     config = {"recursion_limit": 2 * (init.max_review_rounds + 1) + 10}
     result = app.invoke(init, config=config)
     return TravelPlanState(**result) if isinstance(result, dict) else result
+
+
+# ─── 分阶段流式入口（SSE 事件源）───────────────────────────────
+
+# 节点名 → 进度文案。同时充当“哪些事件需要透出”的过滤白名单。
+# planner/reviewer 文案在运行时按轮次/通过位动态拼接，这里留占位。
+_NODE_LABELS: dict[str, str] = {
+    "intent":            "🧭 正在理解出行意图（目的地 / 日期 / 偏好）",
+    "attraction_search": "🗺 正在调用高德搜索景点池",
+    "planner":           "✍️ 正在规划逐日行程",
+    "reviewer":          "🔍 正在评审行程",
+    "meal_search":       "🍽 正在搜索周边餐厅",
+    "meal_recommend":    "🍴 正在为每天挑选餐厅",
+    "finalize":          "📦 正在收敛生成最终行程",
+}
+
+
+def _stage_event(node: str, acc: dict[str, Any], upd: dict[str, Any]) -> dict[str, Any]:
+    """据节点名与累积状态构造一条 stage 进度事件。"""
+    label = _NODE_LABELS[node]
+    ev: dict[str, Any] = {"type": "stage", "node": node, "label": label}
+    if node == "planner":
+        rnd = acc.get("review_round") or 1
+        ev["round"] = rnd
+        ev["label"] = f"{label}（第 {rnd} 轮）"
+    elif node == "reviewer":
+        rnd = acc.get("review_round") or 1
+        approved = bool(upd.get("approved"))
+        ev["round"] = rnd
+        ev["approved"] = approved
+        verdict = "✅ 通过" if approved else "⚠️ 打回"
+        ev["label"] = f"{label}：第 {rnd} 轮 {verdict}"
+    return ev
+
+
+async def run_stream(query: str, **overrides: Any) -> AsyncIterator[dict[str, Any]]:
+    """分阶段流式执行流水线，逐节点 yield 进度事件，末尾 yield 最终结果。
+
+    事件类型：
+      {"type": "stage",  "node", "label", ...}   每个节点完成时
+      {"type": "result", "success", "missing_fields", "history", "plan"}  全部结束
+
+    与 `run()` 共用 build_graph / config，仅改为 astream_events 事件源；
+    旧 invoke 路径不受影响。
+    """
+    app = build_graph(overrides.get("model_name"))
+    init = TravelPlanState(query=query, **overrides)
+    config = {"recursion_limit": 2 * (init.max_review_rounds + 1) + 10}
+
+    acc: dict[str, Any] = init.model_dump()
+    async for event in app.astream_events(init, config=config, version="v2"):
+        if event.get("event") != "on_chain_end":
+            continue
+        node = event.get("name")
+        if node not in _NODE_LABELS:
+            continue
+        upd = (event.get("data") or {}).get("output")
+        if not isinstance(upd, dict):
+            continue
+        acc.update(upd)
+        yield _stage_event(node, acc, upd)
+
+    final = TravelPlanState(**acc)
+    success = not bool(final.missing_fields) and final.final_plan is not None
+    yield {
+        "type": "result",
+        "success": success,
+        "missing_fields": final.missing_fields,
+        "history": final.history,
+        "plan": final.final_plan if success else None,
+    }

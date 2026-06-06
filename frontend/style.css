@@ -127,6 +127,44 @@ header {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 #loading-section p { color: var(--ink-3); font-size: .95rem; line-height: 1.6; }
+.loading-hint { margin-bottom: 20px; }
+
+/* ─── 实时阶段清单 ──────────────────────────────── */
+#progress-steps {
+  max-width: 420px;
+  margin: 0 auto;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: .92rem;
+  color: var(--ink-4);
+  opacity: 0;
+  animation: step-in .25s ease forwards;
+}
+@keyframes step-in { to { opacity: 1; } }
+.progress-step .step-icon {
+  flex: 0 0 18px;
+  width: 18px; height: 18px;
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  font-size: .8rem; font-weight: 700;
+}
+.progress-step.active { color: var(--ink); font-weight: 600; }
+.progress-step.done   { color: var(--ink-3); }
+.progress-step.done .step-icon { color: var(--teal-500); }
+.step-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--teal-500);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
 
 /* ─── 错误区 ────────────────────────────────────── */
 #error-section {
