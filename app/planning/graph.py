@@ -17,6 +17,7 @@ from app.planning.nodes import (
     make_reviewer_node,
     meal_search_node,
     route_after_intent,
+    route_after_planner,
     route_after_review,
 )
 
@@ -40,10 +41,15 @@ def build_graph(model_name: str | None = None):
         {"attraction_search": "attraction_search", END: END}
     )
     g.add_edge("attraction_search", "planner")
-    g.add_edge("planner", "reviewer")
+    # planner 递增 review_round 后决定：是继续送 reviewer 还是已超轮数直接进餐搜索
+    g.add_conditional_edges(
+        "planner", route_after_planner,
+        {"reviewer": "reviewer", "meal_search": "meal_search"},
+    )
+    # reviewer 通过则进餐搜索；打回则给 planner 一次响应机会（出口在 planner 侧）
     g.add_conditional_edges(
         "reviewer", route_after_review,
-        {"planner": "planner", "meal_search": "meal_search"}
+        {"planner": "planner", "meal_search": "meal_search"},
     )
     g.add_edge("meal_search",    "meal_recommend")
     g.add_edge("meal_recommend", "finalize")
@@ -66,6 +72,7 @@ def run(query: str, **overrides: Any) -> TravelPlanState:
     """
     app = build_graph(overrides.get("model_name"))
     init = TravelPlanState(query=query, **overrides)
-    config = {"recursion_limit": 2 * init.max_review_rounds + 10}
+    # max_review_rounds 轮 reviewer + (max_review_rounds+1) 轮 planner，再留余量
+    config = {"recursion_limit": 2 * (init.max_review_rounds + 1) + 10}
     result = app.invoke(init, config=config)
     return TravelPlanState(**result) if isinstance(result, dict) else result

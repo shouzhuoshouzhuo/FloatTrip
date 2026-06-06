@@ -93,7 +93,7 @@ def format_spots_for_llm(pois: list[dict[str, Any]]) -> str:
     for s in pois:
         loc = s["location"]
         rating = f"{s['rating']:.1f}" if s.get("rating") else "无"
-        open_t = (s.get("open_time") or "未知")[:24]
+        open_t = s.get("open_time") or "未知"
         lines.append(
             f"- {s['name']}（评分 {rating}，开放 {open_t}，坐标 {loc['lng']:.4f},{loc['lat']:.4f}）"
         )

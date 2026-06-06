@@ -134,12 +134,20 @@ def make_planner_node(model_name: str | None):
     llm = build_structured_deepseek(TravelRoute, model=model_name, temperature=0.3)
 
     def planner(state: TravelPlanState) -> dict[str, Any]:
+        # ① 上一轮景点集合（用于 spot diff，检测"notes 说改但 JSON 未变"）
+        old_spots = {s["name"] for day in (state.route or []) for s in day.get("spots", [])}
+        # ② 是否最终修订轮（review_round 尚未 +1 时检测）
+        is_final = (state.review_round >= state.max_review_rounds
+                    and bool(state.route_modify_opinion))
+
         cand_text = format_spots_for_llm(state.pois)
         feedback = ""
         if state.route and state.route_modify_opinion:
             feedback = (
                 f"\n\n上一版路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
-                f"评审修改意见（请据此修订）：\n{state.route_modify_opinion}"
+                f"评审修改意见（请据此修订）：\n{state.route_modify_opinion}\n\n"
+                f"⚠️ 重要：你在 notes 中描述的所有改动必须在 days 字段的景点列表中真实体现。"
+                f"Reviewer 直接读取 route JSON，不读 notes 文字——notes 说改了但 JSON 未变 = 没改。"
             )
 
         weather_text = format_weather_for_llm(state.weather_forecast)
@@ -157,6 +165,13 @@ def make_planner_node(model_name: str | None):
                 f"{dialogue_text}"
             )
 
+        # ③ 最终修订提示（末轮告知 planner 这是最后机会）
+        final_note = (
+            "\n\n【最终修订】此轮是最后一次修订机会，之后不再评审。"
+            "你要站在产品的角度，给出不会影响产品体验，不会让用户流失的路线，无需逐条解释修改原因。"
+            if is_final else ""
+        )
+
         prompt = (
             f"用户需求：{state.query}\n"
             f"目的地：{state.destination}\n旅行天数：{state.days} 天\n"
@@ -166,18 +181,40 @@ def make_planner_node(model_name: str | None):
             f"{weather_block}\n\n"
             f"候选景点池（共 {len(state.pois)} 个）：\n{cand_text}"
             f"{feedback}"
-            f"{dialogue_block}\n\n"
+            f"{dialogue_block}"
+            f"{final_note}\n\n"
             f"请给出 {state.days} 天带时刻表的逐天景点安排。"
         )
         result: TravelRoute = invoke_structured(llm, [("system", PLANNER_SYSTEM), ("human", prompt)])
         route = [d.model_dump() for d in result.days]
         rnd = state.review_round + 1
-        note = f"[第{rnd}轮] Planner 出稿：{result.notes or '(无说明)'}"
-        planner_line = f"[第{rnd}轮] Planner：{result.notes or '(无说明)'}"
+
+        # ④ spot diff：检测实际是否有景点变化，透明化"说改但没改"
+        new_spots = {s["name"] for day in route for s in day.get("spots", [])}
+        added   = new_spots - old_spots
+        removed = old_spots - new_spots
+        change_summary = ""
+        if old_spots and (added or removed):
+            parts = []
+            if added:   parts.append(f"新增：{'、'.join(sorted(added))}")
+            if removed: parts.append(f"移除：{'、'.join(sorted(removed))}")
+            change_summary = f"（{' | '.join(parts)}）"
+
+        note         = f"[第{rnd}轮] Planner 出稿：{result.notes or '(无说明)'}"
+        planner_line = f"[第{rnd}轮] Planner：{result.notes or '(无说明)'}{change_summary}"
+
+        # ⑤ notes 声称有改动但景点组成实际无变化时写 warning
+        history = state.history
+        if state.route_modify_opinion and old_spots and new_spots == old_spots:
+            history = history + [
+                f"⚠️ [第{rnd}轮] Planner notes 描述了改动，但景点组成无实际变化",
+            ]
+        history = history + [note]
+
         return {
             "route": route,
             "review_round": rnd,
-            "history": state.history + [note],
+            "history": history,
             "planner_reviewer_dialogue": state.planner_reviewer_dialogue + [planner_line],
         }
 
@@ -230,10 +267,9 @@ def make_reviewer_node(model_name: str | None):
         note = f"[第{state.review_round}轮] Reviewer {verdict}（{result.score}分）：{result.route_modify_opinion[:50]}"
 
         # 追加本轮 Reviewer 记录到共享对话
-        issues_str = "；".join(result.issues[:3]) if result.issues else result.route_modify_opinion[:80]
         reviewer_line = (
             f"[第{state.review_round}轮] Reviewer {'通过' if approved else '打回'}"
-            f"（{result.score}分）：{issues_str or '(无意见)'}"
+            f"（{result.score}分）：{result.route_modify_opinion[:100] or '(无意见)'}"
         )
         return {
             "approved": approved,
@@ -248,9 +284,18 @@ def make_reviewer_node(model_name: str | None):
 
 
 def route_after_review(state: TravelPlanState) -> str:
-    if state.approved or state.review_round >= state.max_review_rounds:
+    """reviewer 通过时进餐搜索；否则永远把球还给 planner（出口由 route_after_planner 控制）。"""
+    if state.approved:
         return "meal_search"
     return "planner"
+
+
+def route_after_planner(state: TravelPlanState) -> str:
+    """planner 递增 review_round 后判定：超出上限则跳餐搜索（末轮 planner 已响应过），
+    否则继续送 reviewer。"""
+    if state.review_round > state.max_review_rounds:
+        return "meal_search"
+    return "reviewer"
 
 
 # ─── 餐饮搜索 ────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 .env.local
 todos.md
-tests/
+tests/eval/fixtures/
+tests/eval/transcripts/
+tests/eval/data/
 CLAUDE.md
 __pycache__/
 *.py[cod]
