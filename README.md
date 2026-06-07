@@ -48,7 +48,10 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 用户输入
    │
    ▼
-[Intent Agent]  ──── 缺少目的地/日期 ──→  提示补充信息
+[Intent Agent]  ──── 缺少目的地/日期 ──→  提示补充信息（快速失败，无额外 LLM 成本）
+   │
+   ▼
+[Query Rewrite Agent]  ←── 查询用户画像，注入偏好（登录用户专属）
    │
    ▼
 [高德景点搜索]  ←── 多关键词 + 评分过滤
@@ -68,6 +71,8 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
    ▼
 [Finalize]  →  含时刻表 + 餐厅 + 距离的完整行程
 ```
+
+**修改规划（迷你图）**：用户对已有行程提修改意见时，跳过 Intent/景点搜索，从上次规划的 checkpoint 恢复状态，只跑 `Planner ⇄ Reviewer（最多 2 轮）→ 餐饮 → Finalize`，Reviewer 验证 Planner 是否真正响应了修改意见。
 
 **技术栈**
 
@@ -209,7 +214,7 @@ Intent 阶段自动拉取高德天气预报（复用已有 `AMAP_API_KEY`），�
 
 > **为什么信任这个系统的输出质量？**
 
-很多 Agent 项目只有"能跑通"的演示，没有对 Agent 行为的定量验证。本项目参照 Anthropic《Demystifying Evals for AI Agents》的方法论，对 Planner 和 Reviewer 两个核心 Agent 建立了一套**可复现的定量评估框架**。
+本项目参照 Anthropic《Demystifying Evals for AI Agents》的方法论，对 Planner 和 Reviewer 两个核心 Agent 建立了一套**可复现的定量评估框架**。
 
 ### 评估设计
 
@@ -228,7 +233,7 @@ Intent 阶段自动拉取高德天气预报（复用已有 `AMAP_API_KEY`），�
 ```
 
 - **输入冻结**：每个测试用例（fixture）冻结了景点候选池和天气，跳过 intent / 高德搜索，使评估可复现、零额外 API 成本
-- **代码打分器 G1–G7**：直接复用生产代码（`helpers.py`）对最终路线做确定性校验，涵盖封闭池、开放时间、地理跨度、结构合法性、天气合规等
+- **代码打分器 G1–G7**：复用代码（`helpers.py`）对最终路线做确定性校验，涵盖封闭池、开放时间、地理跨度、结构合法性、天气合规等
 - **LLM 评委**：对主观质量（偏好贴合、节奏、动线连贯、天气应对策略）打 1–5 分
 - **Reviewer 可靠性**：统计误放行率（放过坏方案）和误打回率（拒绝好方案），量化 Reviewer Agent 本身的判断质量
 - **Planner 反驳率**：逐轮分析 Planner 对 Reviewer 意见的响应（采纳 / 反驳 / 忽略），忽略率高是 pass 率低的强信号

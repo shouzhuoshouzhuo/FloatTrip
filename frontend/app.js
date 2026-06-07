@@ -1,5 +1,122 @@
 /* ─── 全局状态 ─────────────────────────────────── */
 let currentPlanData = null;
+let currentPlanId   = null;   // 最近一次成功规划的 plan_id（用于修改）
+let pendingThreadId = null;   // missing_fields 后多轮续接用
+
+/* ─── Auth 状态 ─────────────────────────────────── */
+function getAuth() {
+  try { return JSON.parse(localStorage.getItem('auth') || 'null'); } catch { return null; }
+}
+function setAuth(data) {
+  localStorage.setItem('auth', JSON.stringify(data));
+}
+function clearAuth() {
+  localStorage.removeItem('auth');
+}
+function authHeaders() {
+  const a = getAuth();
+  return a && a.token ? { 'Authorization': `Bearer ${a.token}` } : {};
+}
+
+/* ─── 导航栏用户区 ──────────────────────────────── */
+function updateNavUser() {
+  const nav = document.getElementById('nav-user');
+  if (!nav) return;
+  const a = getAuth();
+  if (a && a.username) {
+    nav.innerHTML =
+      `<span class="nav-username">${escHtml(a.username)}</span>` +
+      `<button class="nav-logout-btn" id="nav-logout">退出</button>`;
+    document.getElementById('nav-logout').addEventListener('click', () => {
+      clearAuth(); updateNavUser();
+    });
+  } else {
+    nav.innerHTML = `<button class="nav-login-btn" id="nav-login-btn">登录 / 注册</button>`;
+    document.getElementById('nav-login-btn').addEventListener('click', () => openModal('login'));
+  }
+}
+
+/* ─── 顶部框模式切换（新建 vs 修改）─────────────── */
+const NEW_LABEL  = '描述你的旅行需求（含目的地、日期、偏好）';
+const NEW_PH     = '例如：南京 2026-06-10 到 2026-06-12 三天，喜欢历史古迹，想吃本地小吃，慢节奏';
+const MOD_LABEL  = '对行程有意见？再次输入即可修改当前行程';
+const MOD_PH     = '例如：第2天把夫子庙换成中山陵，景点别太多';
+
+function updateSubmitMode() {
+  const label = document.querySelector('#query-section label');
+  const isModify = !!currentPlanId;
+  submitBtn.textContent = isModify ? '🔧 修改规划' : '✨ 开始规划';
+  if (label) label.textContent = isModify ? MOD_LABEL : NEW_LABEL;
+  queryInput.placeholder = isModify ? MOD_PH : NEW_PH;
+}
+
+/* ─── 登录/注册模态框 ───────────────────────────── */
+let _modalMode = 'login';
+
+function openModal(mode) {
+  _modalMode = mode || 'login';
+  document.getElementById('auth-modal').style.display = 'flex';
+  document.getElementById('auth-username').value = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-error').style.display = 'none';
+  _updateModalUI();
+}
+function closeModal() {
+  document.getElementById('auth-modal').style.display = 'none';
+}
+function _updateModalUI() {
+  const isLogin = _modalMode === 'login';
+  document.getElementById('tab-login').classList.toggle('active', isLogin);
+  document.getElementById('tab-register').classList.toggle('active', !isLogin);
+  document.getElementById('auth-submit').textContent = isLogin ? '登录' : '注册';
+}
+
+document.getElementById('modal-close').addEventListener('click', closeModal);
+document.getElementById('auth-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('auth-modal')) closeModal();
+});
+document.getElementById('tab-login').addEventListener('click', () => { _modalMode = 'login'; _updateModalUI(); });
+document.getElementById('tab-register').addEventListener('click', () => { _modalMode = 'register'; _updateModalUI(); });
+
+document.getElementById('auth-submit').addEventListener('click', async () => {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errEl    = document.getElementById('auth-error');
+  if (!username || !password) {
+    errEl.textContent = '用户名和密码不能为空'; errEl.style.display = 'block'; return;
+  }
+  const btn = document.getElementById('auth-submit');
+  btn.disabled = true;
+  try {
+    const url = _modalMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.detail || '操作失败'; errEl.style.display = 'block'; return;
+    }
+    setAuth(data);
+    closeModal();
+    updateNavUser();
+  } catch (e) {
+    errEl.textContent = '网络错误，请重试'; errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// 回车提交
+['auth-username', 'auth-password'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('auth-submit').click();
+  });
+});
+
+// 初始化导航栏（不依赖下方 DOM 引用）
+updateNavUser();
 
 /* ─── DOM 引用 ─────────────────────────────────── */
 const queryInput   = document.getElementById('query-input');
@@ -9,6 +126,9 @@ const loadingSection = document.getElementById('loading-section');
 const errorSection = document.getElementById('error-section');
 const errorList    = document.getElementById('error-list');
 const resultSection = document.getElementById('result-section');
+
+// 初始化顶部框模式（依赖上方 submitBtn / queryInput）
+updateSubmitMode();
 
 /* ─── 工具函数 ─────────────────────────────────── */
 
@@ -361,6 +481,7 @@ function renderRouteIssuesCard(issues) {
 /* ─── 主渲染入口 ───────────────────────────────── */
 function renderPlan(data) {
   currentPlanData = data;
+  if (data.plan_id) currentPlanId = data.plan_id;
 
   buildHeader(data.plan);
   buildDayTabs(data.plan.days, data.plan.weather_forecast || []);
@@ -369,23 +490,126 @@ function renderPlan(data) {
 
   renderWeatherNoteBanner(data.plan.weather_note);
 
-  if (!data.plan.approved && data.plan.route_issues?.length > 0) {
-    renderRouteIssuesCard(data.plan.route_issues);
-  }
+  renderRouteIssuesCard(!data.plan.approved ? (data.plan.route_issues || []) : []);
 
   showSection('result');
+  updateSubmitMode();
   resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /* ─── 缺必填错误 ───────────────────────────────── */
-function showError(missingFields) {
+const FIELD_HINTS = {
+  'destination（目的地）':                   '去哪里玩？比如「南京」「成都」「云南大理」',
+  'travel_start_date（开始日期）':           '出发日期是哪天？比如「6月20日」「2026-06-20」',
+  'travel_end_date（结束日期）':             '结束日期或玩几天？比如「玩3天」「到6月23日」',
+  'travel_end_date（结束日期早于开始日期）': '结束日期好像比出发日期还早，检查一下？',
+};
+
+function showError(missingFields, threadId) {
   errorList.innerHTML = '';
   missingFields.forEach(f => {
     const li = document.createElement('li');
-    li.textContent = f;
+    li.textContent = FIELD_HINTS[f] || f;
     errorList.appendChild(li);
   });
+  const titleEl = document.getElementById('error-title');
+  if (threadId) {
+    pendingThreadId = threadId;
+    if (titleEl) titleEl.textContent = '还差一点点 🙈 补充下面的信息，直接重新提交就好：';
+  } else {
+    if (titleEl) titleEl.textContent = '还差一点点 🙈 请补充以下信息后重试：';
+  }
   showSection('error');
+}
+
+/* ─── 修改顾虑 Human-in-the-Loop 模态框 ─────────── */
+let _pendingId    = null;
+let _parentPlanId = null;
+
+function showConcernModal(concern, pendingId, parentPlanId) {
+  _pendingId    = pendingId;
+  _parentPlanId = parentPlanId || null;
+  document.getElementById('concern-body').textContent = concern;
+  document.getElementById('concern-modal').style.display = 'flex';
+}
+function closeConcernModal() {
+  document.getElementById('concern-modal').style.display = 'none';
+  _pendingId    = null;
+  _parentPlanId = null;
+}
+
+document.getElementById('concern-cancel').addEventListener('click', () => {
+  closeConcernModal();
+  // 恢复到展示原行程（result-section 仍在）
+  showSection('result');
+});
+
+document.getElementById('concern-confirm').addEventListener('click', async () => {
+  const pid = _pendingId;
+  const ppid = _parentPlanId;
+  closeConcernModal();
+  if (!pid) return;
+  // 调 confirm 端点，走 SSE
+  await runConfirmStream(pid, ppid);
+});
+
+async function runConfirmStream(pendingId, parentPlanId) {
+  const btn = submitBtn;
+  if (btn) btn.disabled = true;
+  resetProgress();
+  showSection('loading');
+  try {
+    const res = await fetch('/api/plan/confirm_modification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ pending_id: pendingId, parent_plan_id: parentPlanId }),
+    });
+    if (!res.ok || !res.body) throw new Error(`服务器错误 ${res.status}`);
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let settled = false;
+
+    const handle = (raw) => {
+      let ev;
+      try { ev = JSON.parse(raw); } catch { return; }
+      if (ev.type === 'stage') {
+        appendProgressStep(ev);
+      } else if (ev.type === 'result') {
+        settled = true;
+        finishProgress();
+        if (!ev.success) {
+          showError(ev.missing_fields || ['未知错误'], null);
+        } else {
+          renderPlan(ev);
+        }
+      } else if (ev.type === 'error') {
+        settled = true;
+        showError([`规划失败：${ev.message || '未知错误'}`]);
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        for (const line of frame.split('\n')) {
+          const trimmed = line.replace(/\r$/, '');
+          if (trimmed.startsWith('data:')) handle(trimmed.slice(5).trim());
+        }
+      }
+    }
+    if (!settled) showError(['连接已中断，请重试']);
+  } catch (err) {
+    showError([`请求失败：${err.message}`]);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* ─── 实时阶段清单 ─────────────────────────────── */
@@ -429,38 +653,30 @@ function finishProgress() {
   }
 }
 
-/* ─── 提交（SSE 流式）──────────────────────────── */
-submitBtn.addEventListener('click', async () => {
-  const query = queryInput.value.trim();
-  if (!query) {
-    queryInput.focus();
-    return;
-  }
-
-  submitBtn.disabled = true;
+/* ─── 通用 SSE 规划请求 ─────────────────────────── */
+async function runPlanStream(payload, btn) {
+  if (btn) btn.disabled = true;
   resetProgress();
   showSection('loading');
 
   try {
     const res = await fetch('/api/plan/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(payload),
     });
 
-    if (!res.ok || !res.body) {
-      throw new Error(`服务器错误 ${res.status}`);
-    }
+    if (res.status === 401) { openModal('login'); if (btn) btn.disabled = false; return; }
+    if (!res.ok || !res.body) throw new Error(`服务器错误 ${res.status}`);
 
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let settled = false;
 
-    // 处理一条 SSE 事件（已剥离 data: 前缀的 JSON 文本）
-    const handle = (payload) => {
+    const handle = (raw) => {
       let ev;
-      try { ev = JSON.parse(payload); } catch { return; }
+      try { ev = JSON.parse(raw); } catch { return; }
 
       if (ev.type === 'stage') {
         appendProgressStep(ev);
@@ -468,43 +684,63 @@ submitBtn.addEventListener('click', async () => {
         settled = true;
         finishProgress();
         if (!ev.success) {
-          showError(ev.missing_fields || ['未知错误，请检查输入']);
+          showError(ev.missing_fields || ['未知错误，请检查输入'], ev.thread_id);
         } else {
           renderPlan(ev);
         }
+      } else if (ev.type === 'modification_warning') {
+        // Human-in-the-Loop：planner 有顾虑，暂停等用户确认
+        settled = true;
+        finishProgress();
+        showSection('result'); // 保持原行程可见
+        showConcernModal(ev.concern, ev.pending_id, ev.parent_plan_id);
       } else if (ev.type === 'error') {
         settled = true;
         showError([`规划失败：${ev.message || '未知错误'}`]);
       }
     };
 
-    // 逐 chunk 读取，按 SSE 帧（\n\n 分隔）解析
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-
       let sep;
       while ((sep = buffer.indexOf('\n\n')) !== -1) {
         const frame = buffer.slice(0, sep);
         buffer = buffer.slice(sep + 2);
         for (const line of frame.split('\n')) {
           const trimmed = line.replace(/\r$/, '');
-          if (trimmed.startsWith('data:')) {
-            handle(trimmed.slice(5).trim());
-          }
+          if (trimmed.startsWith('data:')) handle(trimmed.slice(5).trim());
         }
       }
     }
-
-    if (!settled) {
-      showError(['连接已中断，请重试']);
-    }
+    if (!settled) showError(['连接已中断，请重试']);
   } catch (err) {
     showError([`请求失败：${err.message}`]);
   } finally {
-    submitBtn.disabled = false;
+    if (btn) btn.disabled = false;
   }
+}
+
+/* ─── 顶部框提交（新建 / 修改 二合一）───────────── */
+submitBtn.addEventListener('click', async () => {
+  if (!getAuth()) { openModal('login'); return; }
+  const text = queryInput.value.trim();
+  if (!text) { queryInput.focus(); return; }
+
+  let payload;
+  if (currentPlanId) {
+    // 正在查看某行程 → 输入即为修改意见
+    payload = { query: '修改行程', plan_id: currentPlanId, modification_notes: text };
+  } else {
+    payload = { query: text };
+    if (pendingThreadId) {
+      payload.thread_id = pendingThreadId;
+      pendingThreadId = null;
+    }
+  }
+  queryInput.value = '';
+  await runPlanStream(payload, submitBtn);
 });
 
 /* 回车（Ctrl/Cmd + Enter）提交 */
@@ -645,3 +881,33 @@ async function renderDayMap(day) {
     mapInstance.setFitView(mapOverlays, false, [40, 40, 40, 40]);
   } catch { showMapEmpty('地图加载失败，已为你保留行程清单'); }
 }
+
+/* ─── URL 参数处理 ──────────────────────────────── */
+(async function handleUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+
+  // ?login=1 → 自动打开登录框
+  if (params.get('login') === '1' && !getAuth()) {
+    openModal('login');
+    // 清理 URL
+    history.replaceState({}, '', '/');
+  }
+
+  // ?view_plan_id=xxx → 从历史加载并渲染行程
+  const viewId = params.get('view_plan_id');
+  if (viewId) {
+    const a = getAuth();
+    if (!a) { openModal('login'); return; }
+    try {
+      const res = await fetch(`/api/history/${viewId}`, {
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        currentPlanId = viewId;
+        renderPlan({ plan: data.plan, history: [], plan_id: viewId });
+      }
+    } catch {}
+    history.replaceState({}, '', '/');
+  }
+})();

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from typing import Any
+from typing import Annotated, Any
 
-from app.llm.deepseek import build_structured_deepseek
+from app.llm.deepseek import build_chat_deepseek, build_structured_deepseek
 from app.providers.amap.poi import search_around_pois
 from app.planning.schemas import (
     DayMealPick,
     IntentExtraction,
+    ProfileUpdateResult,
+    RewrittenQuery,
     RouteReview,
     SingleDayMealPick,
     TravelPlanState,
@@ -28,7 +30,6 @@ from app.planning.helpers import (
     haversine_km,
     invoke_structured,
     last_spot_of_period,
-    open_time_violations,
     parse_iso_date,
     restaurant_to_dict,
     spot_location_map,
@@ -38,23 +39,92 @@ from app.planning.prompts import (
     INTENT_SYSTEM,
     MEAL_SYSTEM,
     PLANNER_SYSTEM,
+    QUERY_REWRITE_SYSTEM,
     REVIEWER_SYSTEM,
     WEEKDAYS,
 )
+from app.core.database import get_conn
+from app.core.memory import search_profile_fields
 
 from langgraph.graph import END
 
 
+# ─── Query Rewrite Agent ─────────────────────────────────────
+
+def make_query_rewrite_node(model_name: str | None, user_id: str | None):
+    """ReAct Agent：自主查询用户画像字段，改写 query 注入偏好上下文。
+    未登录时返回透传节点（不改写）。
+    """
+    if not user_id:
+        return lambda state: {}
+
+    from langchain_core.tools import tool
+    from langgraph.prebuilt import create_react_agent
+
+    @tool
+    def search_user_profile(fields: Annotated[list[str], "要查询的画像字段列表"]) -> str:
+        """查询用户偏好画像中的指定字段。fields 可选：attraction_prefs, food_prefs, habit_prefs"""
+        with get_conn() as conn:
+            data = search_profile_fields(user_id, fields, conn)
+        if not data or not any(data.values()):
+            return "（该用户暂无相关偏好画像）"
+        return json.dumps(data, ensure_ascii=False, indent=2)
+
+    react_llm    = build_chat_deepseek(model=model_name, temperature=0)
+    rewrite_llm  = build_structured_deepseek(RewrittenQuery, model=model_name, temperature=0)
+    react_agent  = create_react_agent(react_llm, [search_user_profile])
+
+    def query_rewrite(state: TravelPlanState) -> dict[str, Any]:
+        raw = state.query
+        try:
+            # Phase 1：ReAct 自主决定查哪些字段，收集画像（最多 2 轮工具调用）
+            # recursion_limit=6：agent→tools→agent→tools→agent→结束，刚好覆盖 2 轮
+            agent_result = react_agent.invoke(
+                {
+                    "messages": [
+                        ("system", QUERY_REWRITE_SYSTEM),
+                        ("human", f"原始查询：{raw}"),
+                    ]
+                },
+                config={"recursion_limit": 6},
+            )
+            agent_summary = agent_result["messages"][-1].content
+
+            # Phase 2：结构化提取改写结果
+            rewritten: RewrittenQuery = invoke_structured(rewrite_llm, [
+                ("system", "根据以下画像分析，输出改写后的旅行查询。若无需改写则原样输出原始查询。"),
+                ("human", f"原始查询：{raw}\n\nAgent 分析：\n{agent_summary}"),
+            ])
+
+            note = f"[query_rewrite] {raw!r} → {rewritten.rewritten_query!r}（{rewritten.reasoning}）"
+            return {
+                "rewritten_query": rewritten.rewritten_query,
+                "history": state.history + [note],
+            }
+        except Exception as exc:
+            # 降级：直接用原始 query，不中断主流程
+            return {
+                "history": state.history + [f"[query_rewrite] 失败降级（{exc}），使用原始查询"],
+            }
+
+    return query_rewrite
+
+
 # ─── 意图识别 ────────────────────────────────────────────────
 
-def make_intent_node(model_name: str | None):
+def make_intent_node(model_name: str | None, profile_hint: str = ""):
     llm = build_structured_deepseek(IntentExtraction, model=model_name, temperature=0)
 
     def intent(state: TravelPlanState) -> dict[str, Any]:
         today = date.today()
         system = INTENT_SYSTEM.format(today=today.isoformat(), weekday=WEEKDAYS[today.weekday()])
+        # 注入用户历史偏好作为默认值参考
+        hint = profile_hint or state.profile_hint or ""
+        if hint:
+            system += f"\n\n用户历史偏好（仅供参考，以用户本次输入为准，用户未说的字段才用历史默认值）：\n{hint}"
+        effective_query = state.query
         result: IntentExtraction = invoke_structured(
-            llm, [("system", system), ("human", state.query)]
+            llm, [("system", system), ("human", effective_query)]
         )
 
         start = parse_iso_date(result.travel_start_date)
@@ -115,7 +185,7 @@ def make_intent_node(model_name: str | None):
 
 
 def route_after_intent(state: TravelPlanState) -> str:
-    return END if state.missing_fields else "attraction_search"
+    return END if state.missing_fields else "query_rewrite"
 
 
 # ─── 高德景点搜索 ─────────────────────────────────────────────
@@ -130,6 +200,22 @@ def attraction_search_node(state: TravelPlanState) -> dict[str, Any]:
 
 # ─── Planner ─────────────────────────────────────────────────
 
+def _travel_dates_block(state: TravelPlanState) -> str:
+    """逐天『日期（星期）』块，供 planner/reviewer 判断景点当天是否开放
+    （闭馆日/限定开放日，如『周一闭馆』『周三至周日开放』）。无出发日期时返回空串。"""
+    if not state.travel_start_date or not state.days:
+        return ""
+    lines = [
+        f"  Day{i + 1} = {(state.travel_start_date + timedelta(days=i)).isoformat()}"
+        f"（{WEEKDAYS[(state.travel_start_date + timedelta(days=i)).weekday()]}）"
+        for i in range(state.days)
+    ]
+    return (
+        "\n\n出行日期与星期（请据此判断景点当天是否开放，"
+        "勿把有闭馆日/限定开放日的景点排在其不开放的星期）：\n" + "\n".join(lines)
+    )
+
+
 def make_planner_node(model_name: str | None):
     llm = build_structured_deepseek(TravelRoute, model=model_name, temperature=0.3)
 
@@ -142,10 +228,16 @@ def make_planner_node(model_name: str | None):
 
         cand_text = format_spots_for_llm(state.pois)
         feedback = ""
-        if state.route and state.route_modify_opinion:
+        if state.route_modify_opinion:
+            is_user_opinion = "【用户修改意见】" in state.route_modify_opinion
+            opinion_label = (
+                "用户直接修改意见（最高优先级，必须全部响应）"
+                if is_user_opinion else
+                "评审修改意见（请据此修订）"
+            )
             feedback = (
                 f"\n\n上一版路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
-                f"评审修改意见（请据此修订）：\n{state.route_modify_opinion}\n\n"
+                f"{opinion_label}：\n{state.route_modify_opinion}\n\n"
                 f"⚠️ 重要：你在 notes 中描述的所有改动必须在 days 字段的景点列表中真实体现。"
                 f"Reviewer 直接读取 route JSON，不读 notes 文字——notes 说改了但 JSON 未变 = 没改。"
             )
@@ -173,11 +265,12 @@ def make_planner_node(model_name: str | None):
         )
 
         prompt = (
-            f"用户需求：{state.query}\n"
+            f"用户需求：{state.rewritten_query or state.query}\n"
             f"目的地：{state.destination}\n旅行天数：{state.days} 天\n"
             f"每天景点数上限：{state.max_per_day}\n"
             f"景点偏好：{state.attraction_preference or '无'}\n"
             f"游玩习惯/节奏：{state.habit_preference or '无'}"
+            f"{_travel_dates_block(state)}"
             f"{weather_block}\n\n"
             f"候选景点池（共 {len(state.pois)} 个）：\n{cand_text}"
             f"{feedback}"
@@ -203,11 +296,13 @@ def make_planner_node(model_name: str | None):
         note         = f"[第{rnd}轮] Planner 出稿：{result.notes or '(无说明)'}"
         planner_line = f"[第{rnd}轮] Planner：{result.notes or '(无说明)'}{change_summary}"
 
-        # ⑤ notes 声称有改动但景点组成实际无变化时写 warning
+        # ⑤ route 与上一轮完全相同时写 warning（比较完整 JSON，时间/顺序改动不误报）
         history = state.history
-        if state.route_modify_opinion and old_spots and new_spots == old_spots:
+        old_route_json = json.dumps(state.route, ensure_ascii=False, sort_keys=True)
+        new_route_json = json.dumps(route, ensure_ascii=False, sort_keys=True)
+        if state.route_modify_opinion and state.route and old_route_json == new_route_json:
             history = history + [
-                f"⚠️ [第{rnd}轮] Planner notes 描述了改动，但景点组成无实际变化",
+                f"⚠️ [第{rnd}轮] Planner route 与上一轮完全相同，未作任何修改",
             ]
         history = history + [note]
 
@@ -216,6 +311,7 @@ def make_planner_node(model_name: str | None):
             "review_round": rnd,
             "history": history,
             "planner_reviewer_dialogue": state.planner_reviewer_dialogue + [planner_line],
+            "modification_concern": result.modification_concern or None,
         }
 
     return planner
@@ -228,12 +324,10 @@ def make_reviewer_node(model_name: str | None):
 
     def reviewer(state: TravelPlanState) -> dict[str, Any]:
         proximity  = day_proximity_report(state.route, state.pois)
-        bad_open   = open_time_violations(state.route, state.pois)
         bad_unknown = unknown_spots(state.route, state.pois)
 
         facts = (
             f"每天地理跨度：\n{proximity}\n\n"
-            f"开放时间冲突：{('；'.join(bad_open)) or '无'}\n"
             f"非候选池景点：{('；'.join(bad_unknown)) or '无'}"
         )
 
@@ -255,6 +349,7 @@ def make_reviewer_node(model_name: str | None):
         prompt = (
             f"目的地：{state.destination}，共 {state.days} 天，每天上限 {state.max_per_day}。\n"
             f"用户游玩习惯：{state.habit_preference or '无'}"
+            f"{_travel_dates_block(state)}\n"
             f"{weather_block}\n"
             f"候选景点池：\n{format_spots_for_llm(state.pois)}\n\n"
             f"待评审路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
@@ -319,7 +414,7 @@ def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
                 warnings.append(f"Day{day_no} {meal} 无中心景点坐标")
                 entry[meal] = {"anchor": anchor["name"] if anchor else None, "candidates": []}
                 continue
-            raw   = search_around_pois("餐厅", center, api_key, radius=1500, offset=20)
+            raw   = search_around_pois(center, api_key, types="餐饮服务", radius=1500, offset=20)
             cands = [r for r in (restaurant_to_dict(p) for p in raw) if r][:20]
             if not cands:
                 warnings.append(f"Day{day_no} {meal}（{anchor['name']} 周边）无餐饮")
@@ -384,14 +479,25 @@ def make_meal_recommend_node(model_name: str | None):
                 ex.map(_recommend_day, state.meal_candidates)
             )
 
+        def _lookup(name: str, cands_dict: dict[str, Any], cands_list: list[dict]) -> dict | None:
+            """子串匹配 → 取评分最高，不做精确匹配（LLM 经常改写名称后缀）。"""
+            if not name:
+                return None
+            for key, val in cands_dict.items():
+                if name in key or key in name:
+                    return val
+            return cands_list[0] if cands_list else None
+
         pick_map = {p.day: p for p in day_picks}
         meals: list[dict[str, Any]] = []
         for entry in state.meal_candidates:
-            pick         = pick_map.get(entry["day"])
-            lunch_cands  = {c["name"]: c for c in entry["lunch"].get("candidates", [])}
-            dinner_cands = {c["name"]: c for c in entry["dinner"].get("candidates", [])}
-            lunch_info   = lunch_cands.get(pick.lunch_name)  if pick else None
-            dinner_info  = dinner_cands.get(pick.dinner_name) if pick else None
+            pick              = pick_map.get(entry["day"])
+            lunch_cands_list  = sorted(entry["lunch"].get("candidates", []),  key=lambda c: -(c.get("rating") or 0))
+            dinner_cands_list = sorted(entry["dinner"].get("candidates", []), key=lambda c: -(c.get("rating") or 0))
+            lunch_cands       = {c["name"]: c for c in lunch_cands_list}
+            dinner_cands      = {c["name"]: c for c in dinner_cands_list}
+            lunch_info   = _lookup(pick.lunch_name,  lunch_cands,  lunch_cands_list)  if pick else None
+            dinner_info  = _lookup(pick.dinner_name, dinner_cands, dinner_cands_list) if pick else None
 
             if lunch_info is not None:
                 lunch_info  = {**lunch_info,  "reason": pick.lunch_reason}
@@ -429,7 +535,23 @@ def make_meal_recommend_node(model_name: str | None):
 
 # ─── finalize ────────────────────────────────────────────────
 
+def make_finalize_node(memory_writer=None):
+    def finalize_node(state: TravelPlanState) -> dict[str, Any]:
+        result = _finalize_impl(state)
+        if memory_writer and result.get("final_plan"):
+            try:
+                memory_writer(result["final_plan"], state)
+            except Exception:
+                pass  # 记忆写入失败不影响主流程
+        return result
+    return finalize_node
+
+
 def finalize_node(state: TravelPlanState) -> dict[str, Any]:
+    return _finalize_impl(state)
+
+
+def _finalize_impl(state: TravelPlanState) -> dict[str, Any]:
     """组装 final_plan：逐天时刻表 + 午晚餐 + 图片url + haversine 距离。"""
     spot_info    = {s["name"]: s for s in state.pois}
     meals_by_day = {m["day"]: m for m in state.meals}
