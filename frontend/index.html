@@ -18,6 +18,14 @@
     </span>
   </div>
   <div class="header-spacer"></div>
+  <nav class="nav-links">
+    <a href="/" class="nav-link active">新建规划</a>
+    <a href="/history" class="nav-link">历史行程</a>
+    <a href="/profile" class="nav-link">我的画像</a>
+  </nav>
+  <div class="nav-user" id="nav-user">
+    <!-- 由 JS 填充：未登录显示登录按钮，已登录显示用户名+退出 -->
+  </div>
 </header>
 
 <div class="shell">
@@ -40,7 +48,7 @@
 
   <!-- 错误（缺必填） -->
   <section id="error-section">
-    <h3>⚠️ 信息不完整，请补充以下内容后重试：</h3>
+    <h3 id="error-title">⚠️ 信息不完整，请补充以下内容后重试：</h3>
     <ul id="error-list"></ul>
   </section>
 
@@ -84,6 +92,38 @@
     </div>
   </section>
 
+</div>
+
+<!-- 登录 / 注册模态框 -->
+<div class="modal-backdrop" id="auth-modal" style="display:none">
+  <div class="modal-card">
+    <button class="modal-close" id="modal-close">✕</button>
+    <div class="modal-tabs">
+      <button class="modal-tab active" id="tab-login">登录</button>
+      <button class="modal-tab" id="tab-register">注册</button>
+    </div>
+    <div id="auth-error" class="auth-error" style="display:none"></div>
+    <div class="modal-form">
+      <label>用户名</label>
+      <input type="text" id="auth-username" placeholder="请输入用户名" autocomplete="username" />
+      <label>密码</label>
+      <input type="password" id="auth-password" placeholder="请输入密码" autocomplete="current-password" />
+      <button class="modal-submit" id="auth-submit">登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 修改顾虑确认模态框 -->
+<div class="modal-backdrop" id="concern-modal" style="display:none">
+  <div class="concern-modal-card">
+    <div class="concern-icon">⚠️</div>
+    <div class="concern-modal-title">AI 对本次修改有一些顾虑</div>
+    <div class="concern-body" id="concern-body">（顾虑内容）</div>
+    <div class="concern-actions">
+      <button class="concern-btn-cancel" id="concern-cancel">放弃，保留原行程</button>
+      <button class="concern-btn-confirm" id="concern-confirm">确认，继续修改</button>
+    </div>
+  </div>
 </div>
 
 <script src="/app.js"></script>

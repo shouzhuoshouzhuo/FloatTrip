@@ -1,10 +1,14 @@
 """FastAPI 应用入口。
 
 路由：
-  POST /api/plan    — 调用 LangGraph 旅游规划流水线
-  GET  /api/health  — 健康检查
-  GET  /            — 前端首页
-  /*               — 前端静态文件
+  POST /api/plan/stream — SSE 流式规划（含多轮续接、修改规划、记忆注入）
+  POST /api/plan        — 同步规划（向后兼容）
+  POST /api/auth/*      — 注册 / 登录
+  GET  /api/history     — 历史行程列表
+  GET  /api/history/:id — 历史行程详情
+  GET  /api/health      — 健康检查
+  GET  /api/config      — 前端高德 JS Key
+  GET  /                — 前端首页
 """
 
 from __future__ import annotations
@@ -12,22 +16,48 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI
+import asyncio
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app.core.auth import decode_token
+from app.core.database import get_conn, init_db
 from app.core.env import load_local_env
+from app.core.memory import (
+    format_profile_for_prompt,
+    get_user_profile,
+    load_itinerary,
+    save_itinerary,
+    save_pending_modification,
+    set_user_profile,
+)
+from app.core.thread_store import thread_store
 from app.planning.graph import run as run_plan
+from app.planning.graph import run_modification_stream
 from app.planning.graph import run_stream as run_plan_stream
+from app.planning.profile_updater import run_profile_update_agent
+from app.api.auth_routes import router as auth_router
+from app.api.history_routes import router as history_router
+from app.api.profile_routes import router as profile_router
+from app.api.plan_routes import router as plan_router
 
 load_local_env()
+init_db()
 
 # ─── 应用 ────────────────────────────────────────────────────
 
 app = FastAPI(title="AI 旅游规划助手", version="0.1.0")
+
+app.include_router(auth_router)
+app.include_router(history_router)
+app.include_router(profile_router)
+app.include_router(plan_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,14 +68,31 @@ app.add_middleware(
 )
 
 
+# ─── 辅助：从 Authorization header 提取 user_id（强制登录）────
+
+def _get_required_user_id(request: Request) -> str:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="请先登录后再使用规划功能")
+    user_id = decode_token(auth[7:])
+    if not user_id:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+    return user_id
+
+
 # ─── API 路由 ─────────────────────────────────────────────────
 
 class PlanRequest(BaseModel):
     query: str
-    max_per_day: int = 3
+    max_per_day: int = 5
     min_rating: float = 4.5
     max_spots: int = 30
     max_review_rounds: int = 3
+    # 多轮续接
+    thread_id: Optional[str] = None
+    # 修改规划
+    plan_id: Optional[str] = None
+    modification_notes: Optional[str] = None
 
 
 @app.get("/api/health")
@@ -63,8 +110,9 @@ def config():
 
 
 @app.post("/api/plan")
-def create_plan(req: PlanRequest):
+def create_plan(req: PlanRequest, request: Request):
     """调用 LangGraph 多 Agent 规划流水线（同步路由，FastAPI 自动放线程池）。"""
+    _get_required_user_id(request)  # 强制登录校验
     state = run_plan(
         req.query,
         max_per_day=req.max_per_day,
@@ -82,20 +130,140 @@ def create_plan(req: PlanRequest):
 
 
 @app.post("/api/plan/stream")
-async def create_plan_stream(req: PlanRequest):
-    """分阶段 SSE：逐节点推送进度，末帧推送完整 plan（前端复用 renderPlan）。"""
+async def create_plan_stream(req: PlanRequest, request: Request):
+    """分阶段 SSE：逐节点推送进度，末帧推送完整 plan。
 
+    扩展能力：
+    - thread_id: 多轮续接（missing_fields 后补充信息）
+    - plan_id + modification_notes: 修改已有行程（走 checkpoint 迷你图）
+    - Authorization: 登录用户自动保存行程 + 记忆提取 + checkpoint 存储
+    """
+    user_id = _get_required_user_id(request)
+
+    # ── 1. 多轮续接：合并原始 query ──────────────────────────
+    if req.thread_id:
+        original = thread_store.get(req.thread_id)
+        if original:
+            query = f"{original}，{req.query}"
+            thread_store.delete(req.thread_id)
+        else:
+            query = req.query
+    else:
+        query = req.query
+
+    # ── 2. 基础 overrides ────────────────────────────────────
+    parent_plan_id = req.plan_id
+    overrides = dict(
+        max_per_day=req.max_per_day,
+        min_rating=req.min_rating,
+        max_spots=req.max_spots,
+        max_review_rounds=req.max_review_rounds,
+    )
+
+    # ── 3. memory_writer closure（供 finalize 节点写入） ──────
+    saved_plan_id: list[str] = []  # 用列表传引用
+
+    def memory_writer(final_plan: dict, state) -> None:
+        planner_checkpoint = {
+            "route": state.route,
+            "pois":  state.pois,
+            "planner_reviewer_dialogue": state.planner_reviewer_dialogue,
+            "destination": str(state.destination or ""),
+            "travel_start_date": str(state.travel_start_date or ""),
+            "travel_end_date":   str(state.travel_end_date or ""),
+            "days": state.days,
+            "attraction_preference": state.attraction_preference,
+            "food_preference":       state.food_preference,
+            "habit_preference":      state.habit_preference,
+            "weather_forecast": state.weather_forecast,
+            "weather_note":     state.weather_note,
+            "max_per_day":      state.max_per_day,
+            "query":            state.query,
+        }
+        with get_conn() as conn:
+            pid = save_itinerary(
+                user_id, final_plan, query, conn,
+                parent_id=parent_plan_id,
+                modification_notes=req.modification_notes,
+                planner_state=planner_checkpoint,
+            )
+            # visited_destinations 由代码维护（客观事实，不交给 LLM）
+            if state.destination:
+                profile = get_user_profile(user_id, conn)
+                dests = profile.get("visited_destinations", [])
+                if state.destination not in dests:
+                    dests = ([state.destination] + dests)[:20]
+                    set_user_profile(user_id, {**profile, "visited_destinations": dests}, conn)
+        saved_plan_id.append(pid)
+
+    # ── 4. 修改模式：走 checkpoint 迷你图 ────────────────────
+    if req.plan_id and req.modification_notes:
+        with get_conn() as conn:
+            data = load_itinerary(req.plan_id, conn)
+        checkpoint = data["planner_state"] if data else None
+
+        if checkpoint:
+            async def gen_modification():
+                try:
+                    async for ev in run_modification_stream(
+                        checkpoint,
+                        req.modification_notes,
+                        memory_writer=memory_writer,
+                        **overrides,
+                    ):
+                        if ev.get("type") == "modification_warning":
+                            # 存 pending 状态到 DB，用 pending_id 替换 pending_state
+                            pending_state = ev.pop("pending_state", {})
+                            if user_id:
+                                with get_conn() as conn:
+                                    pid = save_pending_modification(user_id, pending_state, conn)
+                                ev["pending_id"] = pid
+                            ev["parent_plan_id"] = parent_plan_id
+                        elif ev.get("type") == "result" and ev.get("success") and saved_plan_id:
+                            ev["plan_id"] = saved_plan_id[0]
+                        yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                except Exception as e:  # noqa: BLE001
+                    err = {"type": "error", "message": str(e)}
+                    yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(
+                gen_modification(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+            )
+        # 无 checkpoint（旧数据）→ 降级走普通流程，带 modification_notes
+        overrides["modification_notes"] = req.modification_notes
+        if parent_plan_id:
+            overrides["parent_plan_id"] = parent_plan_id
+
+    # ── 5. 记忆注入：读取用户历史偏好 ────────────────────────
+    profile_hint = ""
+    if user_id:
+        with get_conn() as conn:
+            profile = get_user_profile(user_id, conn)
+        profile_hint = format_profile_for_prompt(profile)
+
+    # ── 6. 普通规划流 ─────────────────────────────────────────
     async def gen():
         try:
             async for ev in run_plan_stream(
-                req.query,
-                max_per_day=req.max_per_day,
-                min_rating=req.min_rating,
-                max_spots=req.max_spots,
-                max_review_rounds=req.max_review_rounds,
+                query,
+                profile_hint=profile_hint,
+                memory_writer=memory_writer,
+                user_id=user_id,
+                **overrides,
             ):
+                # missing_fields 时追加 thread_id 供前端续接
+                if ev.get("type") == "result" and not ev.get("success") and ev.get("missing_fields"):
+                    ev["thread_id"] = thread_store.create(query)
+                # 成功时追加 plan_id，并触发异步画像更新（只看 raw query，不看改写后的）
+                if ev.get("type") == "result" and ev.get("success") and saved_plan_id:
+                    ev["plan_id"] = saved_plan_id[0]
+                    asyncio.create_task(
+                        run_profile_update_agent(user_id, query, overrides.get("model_name"))
+                    )
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-        except Exception as e:  # noqa: BLE001 — 兜底为前端可见的错误事件
+        except Exception as e:  # noqa: BLE001
             err = {"type": "error", "message": str(e)}
             yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
 
@@ -118,6 +286,16 @@ _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 @app.get("/")
 def index():
     return FileResponse(_FRONTEND_DIR / "index.html")
+
+
+@app.get("/history")
+def history_page():
+    return FileResponse(_FRONTEND_DIR / "history.html")
+
+
+@app.get("/profile")
+def profile_page():
+    return FileResponse(_FRONTEND_DIR / "profile.html")
 
 
 app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR)), name="frontend")

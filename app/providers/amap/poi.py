@@ -20,18 +20,21 @@ ATTRACTION_TYPE = "风景名胜"
 # ─── 周边搜索 ────────────────────────────────────────────────
 
 def search_around_pois(
-    keyword: str,
     location: dict[str, float],
     api_key: str,
     *,
+    types: str = "",
+    keyword: str = "",
     radius: int = 1500,
     offset: int = 6,
     max_retries: int = 3,
 ) -> list[dict[str, Any]]:
-    """调用高德周边搜索，围绕坐标查找餐饮、景点等 POI。"""
+    """调用高德周边搜索，围绕坐标查找餐饮、景点等 POI。
+    餐饮搜索传 types='餐饮服务'，按分类搜索覆盖所有餐馆；
+    有 types 时不发 keywords（两者语义不同，混用结果偏少）。
+    """
     params = {
         "key": api_key,
-        "keywords": keyword,
         "location": f"{location['lng']},{location['lat']}",
         "radius": str(radius),
         "offset": str(offset),
@@ -39,6 +42,10 @@ def search_around_pois(
         "extensions": "all",
         "output": "json",
     }
+    if types:
+        params["types"] = types
+    elif keyword:
+        params["keywords"] = keyword
     url = f"{AMAP_AROUND_SEARCH_URL}?{urllib.parse.urlencode(params)}"
     for attempt in range(max_retries + 1):
         data = http_get_json(url)

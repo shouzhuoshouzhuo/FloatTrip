@@ -472,4 +472,133 @@ header {
   header { padding: 0 14px; }
   .shell { padding: 12px 14px 40px; }
   .brand-text small { display: none; }
+  .nav-links { display: none; }
 }
+
+/* ─── 导航栏扩展 ────────────────────────────────── */
+.nav-links {
+  display: flex; align-items: center; gap: 4px; margin-right: 8px;
+}
+.nav-link {
+  font-size: .85rem; font-weight: 600; color: var(--ink-3);
+  text-decoration: none; padding: 5px 12px; border-radius: 8px;
+  transition: background .15s, color .15s;
+}
+.nav-link:hover { background: var(--teal-100); color: var(--teal-700); }
+.nav-link.active { color: var(--teal-700); background: var(--teal-100); }
+
+.nav-user { display: flex; align-items: center; gap: 8px; }
+.nav-username { font-size: .85rem; font-weight: 600; color: var(--ink-2); }
+.nav-login-btn, .nav-logout-btn {
+  font-size: .82rem; font-weight: 600; padding: 5px 14px; border-radius: 8px;
+  border: 1.5px solid var(--teal-500); cursor: pointer; transition: background .15s, color .15s;
+}
+.nav-login-btn { background: var(--teal-500); color: #fff; }
+.nav-login-btn:hover { background: var(--teal-700); border-color: var(--teal-700); }
+.nav-logout-btn { background: transparent; color: var(--teal-500); }
+.nav-logout-btn:hover { background: var(--teal-100); }
+
+/* ─── 登录/注册模态框 ───────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(28,42,42,.45);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-card {
+  background: var(--card); border-radius: var(--r-lg);
+  width: 360px; max-width: calc(100vw - 32px);
+  padding: 28px 28px 24px;
+  box-shadow: var(--sh-lg);
+  position: relative;
+}
+.modal-close {
+  position: absolute; top: 14px; right: 14px;
+  background: none; border: none; cursor: pointer;
+  font-size: 1rem; color: var(--ink-4); line-height: 1;
+  padding: 4px 6px; border-radius: 6px;
+}
+.modal-close:hover { background: var(--line); color: var(--ink); }
+.modal-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+.modal-tab {
+  flex: 1; padding: 8px; border-radius: 9px; border: 1.5px solid var(--line);
+  background: transparent; font-size: .9rem; font-weight: 600;
+  color: var(--ink-3); cursor: pointer; transition: all .15s;
+}
+.modal-tab.active { background: var(--teal-500); color: #fff; border-color: var(--teal-500); }
+.auth-error {
+  background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+  border-radius: 8px; padding: 8px 12px; font-size: .85rem; margin-bottom: 14px;
+}
+.modal-form { display: flex; flex-direction: column; gap: 10px; }
+.modal-form label { font-size: .75rem; font-weight: 700; color: var(--ink-3); letter-spacing: .04em; text-transform: uppercase; }
+.modal-form input {
+  width: 100%; padding: 10px 12px; border-radius: 9px;
+  border: 1.5px solid var(--line); background: var(--bg);
+  font: inherit; font-size: .95rem; color: var(--ink);
+  transition: border-color .15s;
+}
+.modal-form input:focus { outline: none; border-color: var(--teal-500); }
+.modal-submit {
+  margin-top: 6px; padding: 11px; border-radius: 10px; border: none;
+  background: var(--teal-500); color: #fff; font-size: .95rem; font-weight: 700;
+  cursor: pointer; transition: background .15s;
+}
+.modal-submit:hover { background: var(--teal-700); }
+.modal-submit:disabled { opacity: .6; cursor: not-allowed; }
+
+/* ─── history.html 的 site-nav（复用同一样式） ─── */
+.site-nav {
+  position: sticky; top: 0; z-index: 50;
+  height: var(--header-h);
+  display: flex; align-items: center;
+  padding: 0 32px;
+  background: rgba(255,255,255,.75);
+  backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid rgba(28,42,42,.07);
+}
+.nav-inner {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+}
+.nav-logo {
+  font-size: 1.05rem; font-weight: 700; color: var(--teal-900);
+  text-decoration: none; flex-shrink: 0;
+}
+
+/* ─── 修改顾虑确认模态框 ────────────────────────── */
+.concern-modal-card {
+  background: var(--card); border-radius: var(--r-lg);
+  width: 420px; max-width: calc(100vw - 32px);
+  padding: 28px 28px 24px;
+  box-shadow: var(--sh-lg);
+  position: relative;
+}
+.concern-icon {
+  font-size: 2rem; margin-bottom: 12px; text-align: center;
+}
+.concern-modal-title {
+  font-size: 1.05rem; font-weight: 700; color: #92400e;
+  margin-bottom: 12px; text-align: center;
+}
+.concern-body {
+  font-size: .9rem; color: var(--ink); line-height: 1.7;
+  background: #fffbeb; border: 1px solid #fde68a;
+  border-radius: 10px; padding: 12px 14px;
+  margin-bottom: 20px;
+}
+.concern-actions {
+  display: flex; gap: 10px;
+}
+.concern-btn-confirm {
+  flex: 1; padding: 10px; border-radius: 10px; border: none;
+  background: #d97706; color: #fff; font-size: .9rem; font-weight: 700;
+  cursor: pointer; transition: background .15s;
+}
+.concern-btn-confirm:hover { background: #b45309; }
+.concern-btn-cancel {
+  flex: 1; padding: 10px; border-radius: 10px;
+  border: 1.5px solid var(--line); background: transparent;
+  font-size: .9rem; font-weight: 600; color: var(--ink-3);
+  cursor: pointer; transition: all .15s;
+}
+.concern-btn-cancel:hover { border-color: var(--ink-3); color: var(--ink); }

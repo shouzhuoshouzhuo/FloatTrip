@@ -46,6 +46,11 @@ class TravelRoute(BaseModel):
 
     days: list[DayRoute] = Field(description="逐天路线")
     notes: str = Field(default="", description="本版说明 / 相比上一版的改动")
+    modification_concern: str = Field(
+        default="",
+        description="如果用户修改意见会导致路线质量严重下降（如同天景点地理跨度剧增、"
+                    "明显时间冲突等），在此写出1-2句顾虑；无担忧则空字符串",
+    )
 
 
 class RouteReview(BaseModel):
@@ -93,7 +98,7 @@ class TravelPlanState(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
 
     # 配置
-    max_per_day: int = 3
+    max_per_day: int = 5
     min_rating: float = 4.5
     max_spots: int = 30
     max_review_rounds: int = 3
@@ -123,5 +128,37 @@ class TravelPlanState(BaseModel):
     # Reviewer 最后一轮发现的问题（最大轮数未通过时透传给前端）
     reviewer_issues: list[str] = Field(default_factory=list)
 
+    # Query Rewrite Agent 改写后的查询（由 query_rewrite 节点填充）
+    rewritten_query: Optional[str] = None
+
+    # 用户记忆注入（由 API 层填充）
+    profile_hint: Optional[str] = None
+
+    # 修改规划相关（由 API 层填充）
+    modification_notes: Optional[str] = None
+    parent_plan_id: Optional[str] = None
+    previous_plan_summary: Optional[str] = None
+
+    # Planner 对修改意见的顾虑（Human-in-the-Loop）
+    modification_concern: Optional[str] = None
+
     # 最终输出
     final_plan: Optional[dict[str, Any]] = None
+
+
+# ─── Query Rewrite Agent Schema ───────────────────────────────
+
+class RewrittenQuery(BaseModel):
+    """Query Rewrite Agent 的结构化输出。"""
+    rewritten_query: str = Field(description="融入用户画像偏好后改写的旅行查询；若无相关画像则原样返回")
+    reasoning: str = Field(default="", description="改写理由（仅用于日志）")
+
+
+# ─── Profile Update Agent Schema ──────────────────────────────
+
+class ProfileUpdateResult(BaseModel):
+    """Profile Update Agent 的冲突解析输出（不含 visited_destinations，由代码维护）。"""
+    attraction_prefs: list[str] = Field(default_factory=list, description="景点偏好列表，最多 20 条")
+    food_prefs: list[str] = Field(default_factory=list, description="餐饮偏好列表，最多 20 条")
+    habit_prefs: list[str] = Field(default_factory=list, description="游玩习惯/节奏列表，最多 20 条")
+    change_log: list[str] = Field(default_factory=list, description="每条变更说明")

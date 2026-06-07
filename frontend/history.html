@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>历史行程 — AI 旅游规划助手</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    .history-page { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
+    .history-page h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 24px; color: var(--ink); }
+    .trip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+    .trip-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 20px;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,.07);
+      transition: transform .15s, box-shadow .15s;
+      border: 1.5px solid transparent;
+    }
+    .trip-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,.12); border-color: var(--teal-500); }
+    .trip-card .destination { font-size: 1.15rem; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+    .trip-card .dates { font-size: .85rem; color: #6b7280; margin-bottom: 10px; }
+    .trip-card .badge {
+      display: inline-block; font-size: .75rem; padding: 2px 8px;
+      border-radius: 99px; background: var(--teal-100, #e0f2f1); color: var(--teal-700, #00695c);
+    }
+    .trip-card .badge.modified { background: #fef3c7; color: #92400e; }
+    .empty-state { text-align: center; padding: 80px 20px; color: #9ca3af; }
+    .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+    .empty-state p { font-size: 1rem; }
+    .empty-state a { color: var(--teal-500); text-decoration: none; font-weight: 600; }
+    .loading-hint { text-align: center; padding: 60px; color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <!-- 导航栏（由 JS 动态注入，与 index.html 一致） -->
+  <div id="nav-placeholder"></div>
+
+  <main class="history-page">
+    <h1>历史行程</h1>
+    <div id="trip-list">
+      <div class="loading-hint">加载中…</div>
+    </div>
+  </main>
+
+  <script src="/history.js"></script>
+</body>
+</html>
