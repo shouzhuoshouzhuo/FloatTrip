@@ -141,3 +141,42 @@ def _lookup(name, cands_dict, cands_list):
 **修复**：修改图改为 `planner ⇄ reviewer（最多2轮）→ meal_search → finalize`，复用主流程同一套 `route_after_planner` / `route_after_review` 路由函数，在初始化 state 时注入 `max_review_rounds=2`。`modification_concern`（Human-in-the-Loop 暂停）只在第 1 轮 planner（直接响应用户意见时）触发，后续轮响应 reviewer 反馈时不再弹窗。
 
 **沉淀**：**迷你图（子图）应该保留主流程的质量保证节点**，而不只是最小执行路径。"省一个 LLM 调用"带来的是不受约束的输出，往往得不偿失。迷你图可以裁剪掉输入校验（intent/景点搜索），但不应裁掉输出验证（reviewer）。通过参数控制上限（`max_review_rounds=2`）来平衡质量与成本。
+
+---
+
+## 问题八：用 eval 驱动架构简化——ReAct Agent → 固定工作流（2026-06-07）
+
+**现象**：`query_rewrite` 节点用 ReAct Agent（`create_react_agent`），原始设计意图是让 LLM 自主决定查哪些画像字段。但对 5 个不同场景运行 eval 后，发现 agent 每次的工具调用都是 `input: ['attraction_prefs', 'food_prefs', 'habit_prefs']`——始终一次性查全部三个字段，"自主决定"从未发生。
+
+**根因**：旅行查询场景下，三类偏好（景点/餐饮/习惯）几乎对每次规划都相关，LLM 没有理由跳过任何一类。ReAct 的"自主工具选择"在这个场景下是零收益的——它只是把一个固定行为包了一层不必要的 agent 框架，代价是多了一次额外的 LLM 调用（ReAct loop 本身）。
+
+**修复**：改为固定工作流：直接读 DB 拿全部三字段 → 格式化成 `profile_text` → 单次结构化 LLM 调用（改写 + 冲突解析 + 输出偏好字段）。去掉 `create_react_agent`、`build_chat_deepseek`、`search_user_profile` tool 定义，节省一次 LLM 调用。`QUERY_REWRITE_SYSTEM` prompt 同步从"工具使用说明"改为"直接综合三路输入"的指令。
+
+**沉淀**：
+1. **先写 eval，再做架构决策**。"自主工具调用"听起来灵活，但只有 eval 数据能告诉你 agent 实际上是否在利用这个灵活性。如果所有 trace 都是同一个工具调用模式，就说明灵活性是幻觉，固定工作流更合适。
+2. **ReAct 适合的场景**：工具集合大、调用哪些工具取决于输入内容（如 web search）。工具集合小且每次都全查时，直接调用比 ReAct 更快、更便宜、更可预测。
+3. **eval 的副产品**：为测 ReAct 写的 `tests/eval_query_rewrite/` harness，改为固定工作流后只需删掉 `ToolCallCapture` 和 `g_tool_called`，其余 fixture 和打分器复用不变——eval 框架本身不依赖具体实现，天然支持架构切换验证。
+
+---
+
+## 问题九：`_stage_event` 轮次计算依赖 acc 顺序——`run_modification_stream` 显示第 2 轮（2026-06-07）
+
+**现象**：修改规划时，前端进度显示"正在规划逐日行程（第 2 轮）"，实际上是第 1 轮。
+
+**根因**：`_stage_event` 计算 planner 轮次的公式是 `acc["review_round"] + 1`，设计前提是 **acc 存储节点运行前的状态**（`review_round` 尚未被 planner 递增）。
+- `run_stream`（普通规划）在 `on_chain_start` 推事件——节点还没跑，acc 未更新，`review_round=0`，公式得 1 ✅
+- `run_modification_stream` 在 `on_chain_end` 推事件，且代码先 `acc.update(upd)`（planner 已把 `review_round` 从 0 写成 1），再调 `_stage_event`，公式得 2 ❌
+
+**修复**：在 `run_modification_stream` 的 planner 分支里，把 `yield _stage_event(...)` 移到 `acc.update(upd)` **之前**。其余节点（reviewer / meal_search 等）update 位置不变。
+
+**沉淀**：**隐式时序假设是跨函数 bug 的温床**。`_stage_event` 的注释里写了"acc 反映节点运行前的状态"，但这个约定只在 `run_stream` 里被遵守，`run_modification_stream` 里用了不同的事件时机（end vs start），悄悄违反了假设。写跨函数共享的计算逻辑时，如果它依赖调用时机，应在注释里明确说明前提，并在所有调用点检查是否满足。
+
+---
+
+## `Field(description=...)` 是写给 LLM 的 prompt，不是代码注释（2026-06-07）
+
+Pydantic `Field(description=...)` 在 LLM function calling 场景下，会被序列化进 JSON Schema 传给模型。这意味着 description 的受众是 LLM，不是 Python 解释器或人类文档读者。
+
+因此，description 里可以用自然语言的上下文引用（如"同上规则"），因为 LLM 读的是整个 schema，上下文是完整的。如果受众是人类文档或代码，"同上"就不够——文档可能被单独引用，代码上下文不一定可见。
+
+同理，description 可以写得像 prompt 片段：约束、规则、示例、边界情况说明，而不是像代码注释那样描述"这个字段是什么"。这是利用 LLM 理解自然语言的能力，而非依赖代码逻辑强制约束输出。

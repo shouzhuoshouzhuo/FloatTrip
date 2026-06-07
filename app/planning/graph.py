@@ -69,23 +69,6 @@ def build_graph(
 
 # ─── 流水线入口 ───────────────────────────────────────────────
 
-def run(query: str, **overrides: Any) -> TravelPlanState:
-    """执行完整规划流水线。
-
-    Args:
-        query: 用户一句话需求（必填）
-        **overrides: max_per_day / min_rating / max_spots / max_review_rounds / model_name
-
-    Returns:
-        TravelPlanState — final_plan 已填充，或 missing_fields 非空表示需要用户补充信息
-    """
-    app = build_graph(overrides.get("model_name"))
-    init = TravelPlanState(query=query, **overrides)
-    # max_review_rounds 轮 reviewer + (max_review_rounds+1) 轮 planner，再留余量
-    config = {"recursion_limit": 2 * (init.max_review_rounds + 1) + 10}
-    result = app.invoke(init, config=config)
-    return TravelPlanState(**result) if isinstance(result, dict) else result
-
 
 # ─── 分阶段流式入口（SSE 事件源）───────────────────────────────
 
@@ -210,12 +193,15 @@ async def run_modification_stream(
         upd = (event.get("data") or {}).get("output")
         if not isinstance(upd, dict):
             continue
-        acc.update(upd)
 
         # planner 完成后检查顾虑（仅第 1 轮：直接响应用户修改意见时才暂停）
         if node == "planner":
+            # 必须在 acc.update(upd) 之前推事件：
+            # _stage_event 对 planner 的轮次计算假设 acc 是节点运行前的状态
+            # （review_round 尚未递增），update 之后再算会多加 1
             planner_done = True
             yield _stage_event(node, acc, upd)
+            acc.update(upd)
             concern = acc.get("modification_concern") or ""
             if concern and acc.get("review_round") == 1:
                 # 有顾虑：构造 pending_state 供调用方存 DB，然后停止
@@ -243,6 +229,7 @@ async def run_modification_stream(
                 return
             continue  # 无顾虑，继续
 
+        acc.update(upd)
         yield _stage_event(node, acc, upd)
 
     if not planner_done:

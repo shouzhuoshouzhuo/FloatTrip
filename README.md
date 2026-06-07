@@ -19,7 +19,7 @@
 
 AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游行程生成工具。只需输入一句话的出行需求（目的地、日期、偏好），系统即可自动完成：
 
-- 🔍 **意图识别** — 从自然语言抽取目的地、日期、偏好；支持"明天开始3日游"等相对时间 + 天数表达式
+- 🔍 **意图识别（快速失败）** — 从自然语言抽取目的地、日期、偏好；支持"明天开始3日游"等相对时间 + 天数表达式；缺目的地/日期时立即返回，不触发后续 LLM 调用
 - 🌤️ **天气感知** — 自动拉取出行日期天气预报，雨雪天优先安排室内景点，超出预报范围时降级提示
 - 🗺️ **景点搜索** — 调用高德地图 API 获取真实景点候选池，按评分过滤
 - 🧭 **智能规划** — Planner/Reviewer 多轮循环优化，共享对话记忆确保紧急问题优先修复
@@ -34,11 +34,30 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 
 ## 🎬 演示
 
-> 输入：`明天开始南京3日游，我要吃本地菜`
+> 输入：`明天开始上海3日游`
 
 <p align="center">
-  <img src="./static/images/image copy 2.png" alt="AI 旅游规划助手界面演示" width="900" />
+  <img src="./static/images/规划进程.png" alt="规划页" width="900" />
 </p>
+
+> 规划详情页
+
+<p align="center">
+  <img src="./static/images/上海3日游详情.png" alt="详情页" width="900" />
+</p>
+
+> 历史规划页
+
+<p align="center">
+  <img src="./static/images/历史行程.png" alt="历史页" width="900" />
+</p>
+
+> 我的画像
+
+<p align="center">
+  <img src="./static/images/我的画像.png" alt="历史页" width="900" />
+</p>
+
 
 ---
 
@@ -51,7 +70,7 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 [Intent Agent]  ──── 缺少目的地/日期 ──→  提示补充信息（快速失败，无额外 LLM 成本）
    │
    ▼
-[Query Rewrite Agent]  ←── 查询用户画像，注入偏好（登录用户专属）
+[Query Rewrite]  ←── 直接读 DB 画像，单次 LLM 改写 + 冲突解析（登录用户专属）
    │
    ▼
 [高德景点搜索]  ←── 多关键词 + 评分过滤
@@ -134,22 +153,6 @@ python run.py
 
 ---
 
-## ⚙️ 参数说明
-
-`POST /api/plan` 接口支持以下参数：
-
-
-| 参数                  | 类型     | 默认值 | 说明                      |
-| ------------------- | ------ | --- | ----------------------- |
-| `query`             | string | 必填  | 一句话出行需求                 |
-| `max_per_day`       | int    | 3   | 每天最多景点数                 |
-| `min_rating`        | float  | 4.5 | 景点最低评分门槛                |
-| `max_spots`         | int    | 30  | 候选景点池大小                 |
-| `max_review_rounds` | int    | 3   | Planner-Reviewer 最大循环轮数 |
-
-
----
-
 ## 📁 项目结构
 
 ```
@@ -167,7 +170,7 @@ python run.py
 │       └── prompts.py  # 所有 LLM System Prompt
 ├── tests/
 │   ├── EVAL_GUIDE.md              # 评估框架使用手册
-│   ├── eval/
+│   ├── eval/                      # Planner/Reviewer 评估框架
 │   │   ├── harness.py             # fixture → TravelPlanState → mini-graph
 │   │   ├── run_eval.py            # 主入口：加载用例 → k 次评估 → 报告
 │   │   ├── report.py              # 指标聚合与 Markdown 报告
@@ -177,6 +180,10 @@ python run.py
 │   │       ├── code_graders.py    # G1–G7 确定性代码打分器
 │   │       ├── llm_judge.py       # LLM 评委（主观维度打分）
 │   │       └── reviewer_reliability.py  # Reviewer 可靠性 + Planner 反驳率
+│   ├── eval_query_rewrite/        # query_rewrite 节点专项评估
+│   │   ├── fixtures.py            # 5 个测试场景（补全/冲突/不发明）
+│   │   ├── harness.py             # 直接读 DB + 单次 LLM 调用 + 确定性打分
+│   │   └── run_eval.py            # 评估入口：--only / --k / --out
 │   └── test_weather_mock.py       # 雨天 mock 冒烟测试
 ├── frontend/          # 静态前端（HTML/CSS/JS）
 ├── run.py             # 启动入口
@@ -259,6 +266,31 @@ python -m tests.eval.run_eval --k 5 --out eval_report.md
 ```
 
 详细说明见 [`tests/EVAL_GUIDE.md`](tests/EVAL_GUIDE.md)。
+
+### query_rewrite 节点专项评估
+
+针对 `query_rewrite` 节点的行为验证，独立于 Planner/Reviewer 评估框架，位于 `tests/eval_query_rewrite/`。
+
+**测试的三个核心行为：**
+
+| 指标 | 含义 |
+|---|---|
+| **g_supplement** | query 无偏好时，应从历史画像补全对应字段 |
+| **g_conflict** | query 与画像冲突时（如"不吃辣" vs 画像"辣味美食"），以 query 为准 |
+| **g_no_invention** | query 和画像均无偏好时，三字段应为 null，不凭空编造 |
+
+**5 个 fixture 覆盖场景：**`no-pref-supplement` / `conflict-food-query-wins` / `partial-merge` / `empty-profile` / `no-pref-both`
+
+```bash
+# 单用例冒烟（最快）
+python -m tests.eval_query_rewrite.run_eval --only conflict-food-query-wins
+
+# 全量 5 用例
+python -m tests.eval_query_rewrite.run_eval
+
+# 稳定性（每用例跑 3 次）
+python -m tests.eval_query_rewrite.run_eval --k 3 --out qr_eval_report.md
+```
 
 ---
 

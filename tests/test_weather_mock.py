@@ -40,8 +40,13 @@ def run_test():
     query = f"去南京3日游，{start}出发，{end}结束，喜欢历史古迹"
 
     with patch("app.providers.weather.amap.fetch_forecast", side_effect=_rainy_forecast):
-        from app.planning.graph import run
-        state = run(query)
+        from app.planning.graph import build_graph
+        from app.planning.state import TravelPlanState
+        _app = build_graph()
+        init = TravelPlanState(query=query)
+        config = {"recursion_limit": 2 * (init.max_review_rounds + 1) + 10}
+        result = _app.invoke(init, config=config)
+        state = TravelPlanState(**result) if isinstance(result, dict) else result
 
     print("=" * 60)
     print("天气预报：")

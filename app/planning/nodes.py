@@ -6,7 +6,7 @@ import json
 from datetime import date, timedelta
 from typing import Annotated, Any
 
-from app.llm.deepseek import build_chat_deepseek, build_structured_deepseek
+from app.llm.deepseek import build_structured_deepseek
 from app.providers.amap.poi import search_around_pois
 from app.planning.schemas import (
     DayMealPick,
@@ -52,57 +52,49 @@ from langgraph.graph import END
 # ─── Query Rewrite Agent ─────────────────────────────────────
 
 def make_query_rewrite_node(model_name: str | None, user_id: str | None):
-    """ReAct Agent：自主查询用户画像字段，改写 query 注入偏好上下文。
-    未登录时返回透传节点（不改写）。
-    """
-    if not user_id:
-        return lambda state: {}
-
-    from langchain_core.tools import tool
-    from langgraph.prebuilt import create_react_agent
-
-    @tool
-    def search_user_profile(fields: Annotated[list[str], "要查询的画像字段列表"]) -> str:
-        """查询用户偏好画像中的指定字段。fields 可选：attraction_prefs, food_prefs, habit_prefs"""
-        with get_conn() as conn:
-            data = search_profile_fields(user_id, fields, conn)
-        if not data or not any(data.values()):
-            return "（该用户暂无相关偏好画像）"
-        return json.dumps(data, ensure_ascii=False, indent=2)
-
-    react_llm    = build_chat_deepseek(model=model_name, temperature=0)
-    rewrite_llm  = build_structured_deepseek(RewrittenQuery, model=model_name, temperature=0)
-    react_agent  = create_react_agent(react_llm, [search_user_profile])
+    """固定工作流：直接读取用户画像，单次结构化 LLM 调用改写 query 并输出冲突解析后的偏好字段。"""
+    rewrite_llm = build_structured_deepseek(RewrittenQuery, model=model_name, temperature=0)
 
     def query_rewrite(state: TravelPlanState) -> dict[str, Any]:
         raw = state.query
         try:
-            # Phase 1：ReAct 自主决定查哪些字段，收集画像（最多 2 轮工具调用）
-            # recursion_limit=6：agent→tools→agent→tools→agent→结束，刚好覆盖 2 轮
-            agent_result = react_agent.invoke(
-                {
-                    "messages": [
-                        ("system", QUERY_REWRITE_SYSTEM),
-                        ("human", f"原始查询：{raw}"),
-                    ]
-                },
-                config={"recursion_limit": 6},
-            )
-            agent_summary = agent_result["messages"][-1].content
+            # Step 1：直接读画像（固定查全部三字段，不走 ReAct tool）
+            profile_text = "（该用户暂无历史画像）"
+            if user_id:
+                with get_conn() as conn:
+                    data = search_profile_fields(
+                        user_id, ["attraction_prefs", "food_prefs", "habit_prefs"], conn
+                    )
+                if data and any(data.values()):
+                    parts = []
+                    if data.get("attraction_prefs"):
+                        parts.append("景点偏好：" + "、".join(data["attraction_prefs"]))
+                    if data.get("food_prefs"):
+                        parts.append("餐饮偏好：" + "、".join(data["food_prefs"]))
+                    if data.get("habit_prefs"):
+                        parts.append("游玩习惯：" + "、".join(data["habit_prefs"]))
+                    profile_text = "\n".join(parts)
 
-            # Phase 2：结构化提取改写结果
+            # Step 2：单次结构化 LLM 调用（改写 + 冲突解析 + 输出偏好字段）
+            intent_prefs = (
+                f"本次查询提取的偏好：景点={state.attraction_preference or '无'}，"
+                f"餐饮={state.food_preference or '无'}，习惯={state.habit_preference or '无'}"
+            )
             rewritten: RewrittenQuery = invoke_structured(rewrite_llm, [
-                ("system", "根据以下画像分析，输出改写后的旅行查询。若无需改写则原样输出原始查询。"),
-                ("human", f"原始查询：{raw}\n\nAgent 分析：\n{agent_summary}"),
+                ("system", QUERY_REWRITE_SYSTEM),
+                ("human", f"原始查询：{raw}\n\n{intent_prefs}\n\n用户历史画像：\n{profile_text}"),
             ])
 
             note = f"[query_rewrite] {raw!r} → {rewritten.rewritten_query!r}（{rewritten.reasoning}）"
             return {
                 "rewritten_query": rewritten.rewritten_query,
+                "attraction_preference": rewritten.attraction_preference or state.attraction_preference,
+                "food_preference":       rewritten.food_preference       or state.food_preference,
+                "habit_preference":      rewritten.habit_preference      or state.habit_preference,
                 "history": state.history + [note],
             }
         except Exception as exc:
-            # 降级：直接用原始 query，不中断主流程
+            # 降级：直接用原始 query，不中断主流程；偏好字段保持 intent 提取值
             return {
                 "history": state.history + [f"[query_rewrite] 失败降级（{exc}），使用原始查询"],
             }

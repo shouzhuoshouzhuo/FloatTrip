@@ -38,7 +38,6 @@ from app.core.memory import (
     set_user_profile,
 )
 from app.core.thread_store import thread_store
-from app.planning.graph import run as run_plan
 from app.planning.graph import run_modification_stream
 from app.planning.graph import run_stream as run_plan_stream
 from app.planning.profile_updater import run_profile_update_agent
@@ -109,24 +108,6 @@ def config():
     }
 
 
-@app.post("/api/plan")
-def create_plan(req: PlanRequest, request: Request):
-    """调用 LangGraph 多 Agent 规划流水线（同步路由，FastAPI 自动放线程池）。"""
-    _get_required_user_id(request)  # 强制登录校验
-    state = run_plan(
-        req.query,
-        max_per_day=req.max_per_day,
-        min_rating=req.min_rating,
-        max_spots=req.max_spots,
-        max_review_rounds=req.max_review_rounds,
-    )
-    success = not bool(state.missing_fields) and state.final_plan is not None
-    return {
-        "success": success,
-        "missing_fields": state.missing_fields,
-        "history": state.history,
-        "plan": state.final_plan if success else None,
-    }
 
 
 @app.post("/api/plan/stream")

@@ -152,6 +152,18 @@ class RewrittenQuery(BaseModel):
     """Query Rewrite Agent 的结构化输出。"""
     rewritten_query: str = Field(description="融入用户画像偏好后改写的旅行查询；若无相关画像则原样返回")
     reasoning: str = Field(default="", description="改写理由（仅用于日志）")
+    attraction_preference: str | None = Field(
+        default=None,
+        description="景点偏好摘要（冲突解析后）。将本次查询明确偏好与画像偏好合并，若有矛盾以本次查询为准；无偏好则为 null",
+    )
+    food_preference: str | None = Field(
+        default=None,
+        description="餐饮偏好摘要（冲突解析后）。同上规则；无偏好则为 null",
+    )
+    habit_preference: str | None = Field(
+        default=None,
+        description="游玩习惯/节奏摘要（冲突解析后）。同上规则；无偏好则为 null",
+    )
 
 
 # ─── Profile Update Agent Schema ──────────────────────────────
