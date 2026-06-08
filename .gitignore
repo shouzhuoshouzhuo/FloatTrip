@@ -13,3 +13,6 @@ dist/
 build/
 .venv/
 venv/
+resume.md
+eval*
+qr_eval_report.md

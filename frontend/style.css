@@ -259,8 +259,27 @@ header {
 }
 
 .day-theme {
+  display: flex; align-items: center; gap: 10px;
   font-size: .87rem; color: var(--ink-2); margin-bottom: 16px; padding-left: 2px;
 }
+.btn-optimize {
+  flex-shrink: 0;
+  font-size: .78rem; padding: 3px 10px; border-radius: 20px;
+  border: 1.5px solid var(--teal-500); color: var(--teal-500);
+  background: transparent; cursor: pointer; white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.btn-optimize:hover:not(:disabled) { background: var(--teal-500); color: #fff; }
+.btn-optimize:disabled { opacity: .6; cursor: default; }
+.btn-revert {
+  flex-shrink: 0;
+  font-size: .78rem; padding: 3px 10px; border-radius: 20px;
+  border: 1.5px solid var(--ink-3); color: var(--ink-3);
+  background: transparent; cursor: pointer; white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.btn-revert:hover:not(:disabled) { background: var(--ink-3); color: #fff; }
+.btn-revert:disabled { opacity: .6; cursor: default; }
 
 /* ─── 时间轴 ───────────────────────────────────── */
 .timeline { position: relative; padding-left: 30px; }

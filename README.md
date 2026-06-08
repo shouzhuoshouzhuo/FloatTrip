@@ -135,6 +135,7 @@ AMAP_API_KEY=your_amap_key             # 高德 Web 服务 Key（必填，景点
 DEEPSEEK_API_KEY=your_deepseek_key     # DeepSeek API Key（必填）
 AMAP_JS_KEY=your_amap_js_key           # 高德 JS API Key（可选，前端地图）
 AMAP_JS_SECURITY_CODE=your_js_secret   # 高德 JS API 安全密钥（可选，与 JS Key 配套）
+REDIS_URL=redis://localhost:6379/0     # Redis 缓存（可选，不填则跳过缓存，不影响功能）
 ```
 
 > **如何获取 Key？**
@@ -143,7 +144,21 @@ AMAP_JS_SECURITY_CODE=your_js_secret   # 高德 JS API 安全密钥（可选，�
 > - 高德 JS API Key：同一应用下再添加一个 **Web 端 (JS API)** Key，并配置安全密钥 `securityJsCode`（前端地图可视化用，不填则地图区域降级提示）
 > - DeepSeek Key：登录 [DeepSeek 开放平台](https://platform.deepseek.com/) → API Keys
 
-### 4. 启动服务
+### 4. （可选）启动 Redis
+
+如需启用缓存，先启动 Redis，再配置 `REDIS_URL`：
+
+```bash
+# macOS
+brew install redis && brew services start redis
+
+# Docker
+docker run -d -p 6379:6379 redis:alpine
+```
+
+不启动也完全可以正常使用，缓存功能会自动跳过。
+
+### 5. 启动服务
 
 ```bash
 python run.py
@@ -157,7 +172,7 @@ python run.py
 
 ```
 ├── app/
-│   ├── core/          # 环境变量加载、HTTP 工具
+│   ├── core/          # 环境变量加载、HTTP 工具、Redis 缓存层
 │   ├── llm/           # DeepSeek 客户端工厂
 │   ├── providers/
 │   │   ├── amap/      # 高德地图 POI 搜索
@@ -214,6 +229,12 @@ Intent 阶段自动拉取高德天气预报（复用已有 `AMAP_API_KEY`），�
 
 **7. 前端地图动线可视化**
 后端通过 `GET /api/config` 仅向前端下发高德 **JS API** 密钥（不暴露敏感的 REST `AMAP_API_KEY`），前端按天用高德地图绘制景点标注与连线动线，地图占据半屏，未配置 JS Key 时地图区域降级为友好提示，不影响行程文本展示。
+
+**8. Redis 缓存层（可选，优雅降级）**
+高德天气（TTL=4h）和 POI 搜索（TTL=12h）结果自动写入 Redis，重复请求直接命中缓存。`REDIS_URL` 未配置或 Redis 不可用时，`cache.py` 静默降级为透传，整个功能无任何副作用，不影响主流程稳定性。
+
+**9. 路线优化（暴力枚举最短路径）**
+规划完成后，用户可对任意一天点击"优化路线"：后端枚举 daytime 景点全排列，以 haversine 距离（含午/晚餐地理位置）选最短路径，evening 景点固定末位，重算每段 `dist_from_prev_km` 并时间槽顺序对齐后写回 DB。若优化距离与原始差距 < 0.05 km 则标记 `improved=false`。支持一键回退到 Agent 原始顺序（`POST /api/plan/revert_day`），前端在首次优化时保存原始 timeline 快照，确保回退数据准确。
 
 ---
 

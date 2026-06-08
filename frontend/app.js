@@ -2,6 +2,7 @@
 let currentPlanData = null;
 let currentPlanId   = null;   // 最近一次成功规划的 plan_id（用于修改）
 let pendingThreadId = null;   // missing_fields 后多轮续接用
+const optimizedDays = new Map(); // dayIdx → agent 原始 timeline（供回退用）
 
 /* ─── Auth 状态 ─────────────────────────────────── */
 function getAuth() {
@@ -404,10 +405,140 @@ function buildDayTabs(days, weatherForecast) {
 function switchDay(i) {
   const days = currentPlanData.plan.days;
   const day  = days[i];
-  document.getElementById('day-theme').textContent =
-    day.theme ? `📅 ${day.date || ''}  ${day.theme}` : (day.date || '');
+
+  // 天主题文字 + 优化按钮（同行 flex 布局）
+  const themeEl = document.getElementById('day-theme');
+  themeEl.innerHTML = '';
+
+  const themeText = document.createElement('span');
+  themeText.textContent = day.theme ? `📅 ${day.date || ''}  ${day.theme}` : (day.date || '');
+  themeEl.appendChild(themeText);
+
+  // 当天景点 ≥ 2 个且已登录（有 plan_id）时显示优化/回退按钮
+  const attractionCount = (day.timeline || []).filter(t => t.type === 'attraction').length;
+  if (attractionCount >= 2 && currentPlanId) {
+    const btn = document.createElement('button');
+    btn.className = 'btn-optimize';
+    // 无论是否已优化，都预先绑定 onclick，确保 revertDay 恢复按钮后仍可点击
+    btn.onclick = () => optimizeDay(currentPlanId, day.day, btn, i);
+
+    if (optimizedDays.has(i)) {
+      // 已优化状态：禁用优化按钮 + 显示回退
+      btn.textContent = '✅ 已优化';
+      btn.disabled = true;
+      themeEl.appendChild(btn);
+
+      const revertBtn = document.createElement('button');
+      revertBtn.className = 'btn-revert';
+      revertBtn.textContent = '↩️ 回退';
+      revertBtn.onclick = () => revertDay(currentPlanId, day.day, optimizedDays.get(i), revertBtn, btn, i);
+      themeEl.appendChild(revertBtn);
+    } else {
+      btn.textContent = '🔀 优化路线';
+      themeEl.appendChild(btn);
+    }
+  }
+
   buildTimeline(day.timeline);
   renderDayMap(day);
+}
+
+/* ─── 路线优化（暴力枚举最短路径）────────────────── */
+async function optimizeDay(planId, dayNum, btn, dayIdx) {
+  // 首次优化才保存 agent 原始 timeline，防止二次优化时覆盖
+  if (!optimizedDays.has(dayIdx)) {
+    optimizedDays.set(dayIdx,
+      JSON.parse(JSON.stringify(currentPlanData?.plan?.days?.[dayIdx]?.timeline || []))
+    );
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 优化中…';
+
+  try {
+    const res = await fetch('/api/plan/optimize_day', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ plan_id: planId, day: dayNum }),
+    });
+
+    if (!res.ok) {
+      btn.textContent = '❌ 失败，重试';
+      btn.disabled = false;
+      optimizedDays.delete(dayIdx); // 失败时清除，允许重试
+      return;
+    }
+
+    const data = await res.json();
+
+    // 更新内存中的 plan（保证切换回来时数据也是最新的）
+    if (currentPlanData?.plan?.days?.[dayIdx]) {
+      currentPlanData.plan.days[dayIdx].timeline = data.optimized_day.timeline;
+    }
+
+    // 重新渲染当天 timeline 和地图
+    buildTimeline(data.optimized_day.timeline);
+    renderDayMap(data.optimized_day);
+
+    // 显示优化结果
+    if (data.improved) {
+      btn.textContent = `✅ ${data.original_km.toFixed(1)}→${data.optimized_km.toFixed(1)}km`;
+    } else {
+      btn.textContent = '✅ 已是最优';
+    }
+
+    // 注入回退按钮（从 Map 取 agent 原始 timeline）
+    const revertBtn = document.createElement('button');
+    revertBtn.className = 'btn-revert';
+    revertBtn.textContent = '↩️ 回退';
+    revertBtn.onclick = () => revertDay(planId, dayNum, optimizedDays.get(dayIdx), revertBtn, btn, dayIdx);
+    document.getElementById('day-theme').appendChild(revertBtn);
+
+  } catch {
+    btn.textContent = '❌ 失败，重试';
+    btn.disabled = false;
+    optimizedDays.delete(dayIdx);
+  }
+}
+
+/* ─── 回退路线优化 ──────────────────────────────── */
+async function revertDay(planId, dayNum, originalTimeline, revertBtn, optimizeBtn, dayIdx) {
+  revertBtn.disabled = true;
+  revertBtn.textContent = '⏳ 回退中…';
+
+  try {
+    const res = await fetch('/api/plan/revert_day', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ plan_id: planId, day: dayNum, original_timeline: originalTimeline }),
+    });
+
+    if (!res.ok) {
+      revertBtn.textContent = '❌ 失败';
+      revertBtn.disabled = false;
+      return;
+    }
+
+    // 还原内存中的 plan
+    if (currentPlanData?.plan?.days?.[dayIdx]) {
+      currentPlanData.plan.days[dayIdx].timeline = originalTimeline;
+    }
+
+    // 重新渲染
+    buildTimeline(originalTimeline);
+    renderDayMap({ ...(currentPlanData?.plan?.days?.[dayIdx] || {}), timeline: originalTimeline });
+
+    // 从 Map 中删除，恢复"未优化"状态
+    optimizedDays.delete(dayIdx);
+    // 移除回退按钮，恢复优化按钮
+    revertBtn.remove();
+    optimizeBtn.textContent = '🔀 优化路线';
+    optimizeBtn.disabled = false;
+
+  } catch {
+    revertBtn.textContent = '❌ 失败';
+    revertBtn.disabled = false;
+  }
 }
 
 /* ─── 渲染计划头部 ─────────────────────────────── */
@@ -480,6 +611,7 @@ function renderRouteIssuesCard(issues) {
 
 /* ─── 主渲染入口 ───────────────────────────────── */
 function renderPlan(data) {
+  optimizedDays.clear(); // 新 plan 加载时重置优化状态
   currentPlanData = data;
   if (data.plan_id) currentPlanId = data.plan_id;
 
