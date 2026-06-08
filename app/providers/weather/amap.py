@@ -8,6 +8,7 @@ from __future__ import annotations
 import urllib.parse
 from typing import Any
 
+from app.core.cache import get_cached, set_cached, weather_cache_key, WEATHER_TTL
 from app.core.http import http_get_json
 
 AMAP_WEATHER_URL = "https://restapi.amap.com/v3/weather/weatherInfo"
@@ -34,6 +35,12 @@ def fetch_forecast(city: str, api_key: str) -> list[dict[str, Any]]:
 
     接口异常或无数据时返回空列表（由调用方降级处理）。
     """
+    # 尝试从缓存获取
+    cache_key = weather_cache_key(city)
+    cached = get_cached(cache_key)
+    if cached is not None:
+        return cached
+
     params = {
         "key": api_key,
         "city": city,
@@ -70,4 +77,8 @@ def fetch_forecast(city: str, api_key: str) -> list[dict[str, Any]]:
             "night_temp":    str(c.get("nighttemp", "")).strip(),
             "is_bad":        _is_bad(day_w) or _is_bad(night_w),
         })
+
+    # 写入缓存
+    if result:
+        set_cached(cache_key, result, WEATHER_TTL)
     return result

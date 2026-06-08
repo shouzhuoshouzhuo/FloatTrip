@@ -6,6 +6,7 @@ import time
 import urllib.parse
 from typing import Any
 
+from app.core.cache import get_cached, set_cached, poi_cache_key, POI_TTL
 from app.core.http import http_get_json
 from app.providers.amap.client import (
     AMAP_AROUND_SEARCH_URL,
@@ -70,6 +71,13 @@ def search_attraction_pois(
     page: int = 1,
 ) -> list[dict[str, Any]]:
     """用高德关键字搜索 API 返回景点 POI 列表，类型固定为风景名胜。"""
+    # 缓存逻辑：仅缓存 page=1 的请求
+    cache_key = poi_cache_key(city, keywords) if page == 1 else None
+    if cache_key is not None:
+        cached = get_cached(cache_key)
+        if cached is not None:
+            return cached
+
     params: dict[str, str] = {
         "key": api_key,
         "keywords": keywords,
@@ -86,6 +94,8 @@ def search_attraction_pois(
         data = http_get_json(url)
         if data.get("status") == "1":
             pois = data.get("pois", [])
+            if page == 1 and pois:
+                set_cached(cache_key, pois, POI_TTL)
             return pois if isinstance(pois, list) else []
         info = str(data.get("info") or "未知错误")
         if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
