@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
+import time
 from datetime import date, timedelta
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from app.core.env import load_local_env
 from app.providers.amap.poi import (
@@ -107,9 +111,14 @@ def spot_location_map(pois: list[dict[str, Any]]) -> dict[str, dict[str, float]]
 # ─── Reviewer 预检工具 ────────────────────────────────────────
 
 def day_proximity_report(route: list[dict[str, Any]], pois: list[dict[str, Any]]) -> str:
-    """每天景点最大跨度（km），作为客观事实喂给 Reviewer。"""
+    """每天景点最大跨度 + 各天中心坐标 + 跨天中心间距，作为客观事实喂给 Reviewer。
+
+    跨天中心间距用于检测"多天行程覆盖同一地理区域"的问题：
+    若两天的游玩中心距 < 5km，说明 planner 未按地理方位分区，两天在同一区域反复横跳。
+    """
     loc_map = spot_location_map(pois)
-    lines = []
+    day_summaries: list[tuple] = []  # (day_no, names, span_km, center | None)
+
     for day in route:
         coords = [loc_map[s["name"]] for s in day.get("spots", []) if s["name"] in loc_map]
         span = 0.0
@@ -119,8 +128,34 @@ def day_proximity_report(route: list[dict[str, Any]], pois: list[dict[str, Any]]
                 for i in range(len(coords))
                 for j in range(i + 1, len(coords))
             )
+        center: dict[str, float] | None = (
+            {"lat": sum(c["lat"] for c in coords) / len(coords),
+             "lng": sum(c["lng"] for c in coords) / len(coords)}
+            if coords else None
+        )
         names = "、".join(s["name"] for s in day.get("spots", []))
-        lines.append(f"Day {day.get('day')}：{names} —— 当天最大跨度 {span:.1f} km")
+        day_summaries.append((day.get("day"), names, span, center))
+
+    lines = []
+    for day_no, names, span, center in day_summaries:
+        cstr = f"（中心 {center['lat']:.3f}N,{center['lng']:.3f}E）" if center else ""
+        lines.append(f"Day {day_no}：{names} —— 最大跨度 {span:.1f} km{cstr}")
+
+    # 跨天中心间距（行程 2 天及以上才有意义）
+    valid = [(d, c) for d, _, _, c in day_summaries if c]
+    if len(valid) >= 2:
+        lines.append("各天游玩中心间距：")
+        for i in range(len(valid)):
+            for j in range(i + 1, len(valid)):
+                di, ci = valid[i]
+                dj, cj = valid[j]
+                dist = haversine_km(ci, cj)
+                flag = (
+                    " ⚠️ 两天游玩区域高度重叠，建议按地理方位分区重新规划"
+                    if dist < 5 else ""
+                )
+                lines.append(f"  Day{di}↔Day{dj} 中心距离：{dist:.1f} km{flag}")
+
     return "\n".join(lines)
 
 
@@ -196,11 +231,48 @@ def invoke_structured(llm: Any, messages: list[tuple[str, str]], *, retries: int
 
     DeepSeek function_calling 模式偶尔返回 None；重试若干次，
     仍失败则抛出明确错误而非 AttributeError。
+
+    诊断日志：
+    - 每次调用打印耗时（帮助区分"网络慢"和"重试导致慢"）
+    - 出现 None 时打印警告，标明是第几次重试
     """
-    for _ in range(retries):
+    # 估算输入 token（粗略：字符数 / 2 ≈ token 数，仅供参考）
+    total_chars = sum(len(role) + len(content) for role, content in messages)
+    schema_name = getattr(getattr(llm, "schema", None), "__name__", None)
+    # 从 llm 对象尝试取 schema 名（with_structured_output 绑定的 Pydantic 类）
+    if schema_name is None:
+        # langchain with_structured_output 把 schema 存在内部不同位置，尝试常见路径
+        for attr in ("_schema", "schema_", "output_schema"):
+            s = getattr(llm, attr, None)
+            if s and hasattr(s, "__name__"):
+                schema_name = s.__name__
+                break
+    label = schema_name or "unknown"
+
+    for attempt in range(retries):
+        t0 = time.perf_counter()
         result = llm.invoke(messages)
+        elapsed = time.perf_counter() - t0
+
         if result is not None:
+            if attempt > 0:
+                logger.warning(
+                    "[invoke_structured] %s 第 %d 次重试后成功，本次耗时 %.2fs，"
+                    "输入约 %d chars",
+                    label, attempt + 1, elapsed, total_chars,
+                )
+            else:
+                logger.debug(
+                    "[invoke_structured] %s 首次成功，耗时 %.2fs，输入约 %d chars",
+                    label, elapsed, total_chars,
+                )
             return result
+
+        logger.warning(
+            "[invoke_structured] %s 第 %d 次调用返回 None（耗时 %.2fs），准备重试…",
+            label, attempt + 1, elapsed,
+        )
+
     raise RuntimeError(f"结构化输出连续 {retries} 次返回 None，模型未产出有效结果")
 
 

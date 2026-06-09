@@ -28,17 +28,17 @@ class SpotPlan(BaseModel):
     """单个景点的安排（含游玩时段）。"""
 
     name: str = Field(description="景点名，必须严格来自候选景点池")
+    period: str = Field(description="时段：morning / afternoon / evening")
     start_time: str = Field(description="开始游玩时间，格式 HH:MM")
     end_time: str = Field(description="结束游玩时间，格式 HH:MM")
-    period: str = Field(description="时段：morning / afternoon / evening")
 
 
 class DayRoute(BaseModel):
     """单天的路线。"""
 
     day: int = Field(description="第几天，从 1 开始")
-    theme: str = Field(description="当天主题，一句话")
     spots: list[SpotPlan] = Field(description="当天景点（按时间先后排列）")
+    theme: str = Field(description="当天主题，一句话，根据已确定的景点内容归纳")
 
 
 class TravelRoute(BaseModel):
@@ -54,12 +54,68 @@ class TravelRoute(BaseModel):
 
 
 class RouteReview(BaseModel):
-    """Reviewer 对路线的评审结论。"""
+    """Reviewer 对路线的评审结论。
 
+    字段顺序即生成顺序：先 reasoning（CoT 逐维分析），后结论字段。
+    issues 与 route_modify_opinion 面向不同读者，不要混淆：
+    - route_modify_opinion：给 planner 看的修改指令（诊断语气，可技术化）
+    - issues：给用户看的友好出行提醒（温和、可执行；告诉用户旅行时要注意什么）
+    """
+
+    reasoning: str = Field(
+        description=(
+            "逐维度评审的完整推理过程：对地点相近/大众常去/真实性/贴合习惯/"
+            "夜间合理性/天气合理性/折返路线逐一分析，写出各维度结论（合格/不合格+原因）。"
+            "issues 和 route_modify_opinion 仅从此推理的结论中提炼，不得凭空添加。"
+        )
+    )
     approved: bool = Field(description="路线是否达标")
     score: int = Field(description="综合评分 0-100")
-    issues: list[str] = Field(default_factory=list, description="发现的问题列表")
-    route_modify_opinion: str = Field(default="", description="给 Planner 的修改意见；approved=true 时可空")
+    route_modify_opinion: str = Field(
+        default="",
+        description="给 planner 看的修改指令，诊断语气，可技术化；approved=true 时可空",
+    )
+    issues: list[str] = Field(
+        default_factory=list,
+        description=(
+            "给用户看的友好出行提醒列表（不是诊断！）。"
+            "将 route_modify_opinion 中的问题转化为温和、可执行的用户语言，"
+            "告诉用户实际出行时要注意什么，"
+            "例：『Day2 行程较紧凑，建议提前预约餐厅』、"
+            "『Day3 雷阵雨天气，记得带伞并优先安排室内景点』。"
+            "禁止使用『违规』『冲突』『不合理』『地理跨度过大』这类批判性/技术性词汇。"
+            "approved=true 且无需提醒时返回空列表。"
+        ),
+    )
+
+
+class TimeViolation(BaseModel):
+    """单个景点的开放时间违规事实，仅供 planner 看（用于定位并修正路线）。"""
+
+    day: int = Field(description="第几天，从 1 开始")
+    spot_name: str = Field(description="景点名")
+    detail: str = Field(description="一句话描述违规事实，planner 仅凭这一条即可定位并修正")
+
+
+class TimeCheckResult(BaseModel):
+    """time_check Agent 的输出。
+
+    字段顺序即生成顺序：先 reasoning（CoT 探索），后 violations（仅确认违规）。
+    Pydantic 字段顺序对结构化输出有强引导——模型先生成 reasoning 把每个景点逐项核查，
+    再从结论中筛选违规写入 violations，避免"边推理边打违规标签"的矛盾。
+    """
+
+    reasoning: str = Field(
+        description=(
+            "逐景点核查的完整推理过程：『安排时段 vs 开放原文 → 核查 → 结论合法/违规』。"
+            "推理必须覆盖所有景点，包括最终判定为合法的项。"
+            "violations 字段只写从此推理中确认违规的项。"
+        )
+    )
+    violations: list[TimeViolation] = Field(
+        default_factory=list,
+        description="确认违规的列表，detail 写一句话事实陈述；reasoning 中判定合法的项不得写入。",
+    )
 
 
 class SingleDayMealPick(BaseModel):
@@ -128,6 +184,12 @@ class TravelPlanState(BaseModel):
     # Reviewer 最后一轮发现的问题（最大轮数未通过时透传给前端）
     reviewer_issues: list[str] = Field(default_factory=list)
 
+    # 时间核查（time_check 节点：planner-reviewer 主循环后插入的二次修正循环）
+    time_violations: list[dict[str, Any]] = Field(default_factory=list)
+    time_check_round: int = 0
+    max_time_check_rounds: int = 3
+    time_check_done: bool = False  # 单向门：进入时间修正阶段后置 True，planner 据此决定下一跳
+
     # Query Rewrite Agent 改写后的查询（由 query_rewrite 节点填充）
     rewritten_query: Optional[str] = None
 
@@ -150,8 +212,7 @@ class TravelPlanState(BaseModel):
 
 class RewrittenQuery(BaseModel):
     """Query Rewrite Agent 的结构化输出。"""
-    rewritten_query: str = Field(description="融入用户画像偏好后改写的旅行查询；若无相关画像则原样返回")
-    reasoning: str = Field(default="", description="改写理由（仅用于日志）")
+    reasoning: str = Field(default="", description="冲突解析的推理过程：逐条比对本次查询偏好与画像偏好，写出各项合并或覆盖结论；改写理由；仅用于日志")
     attraction_preference: str | None = Field(
         default=None,
         description="景点偏好摘要（冲突解析后）。将本次查询明确偏好与画像偏好合并，若有矛盾以本次查询为准；无偏好则为 null",
@@ -164,6 +225,7 @@ class RewrittenQuery(BaseModel):
         default=None,
         description="游玩习惯/节奏摘要（冲突解析后）。同上规则；无偏好则为 null",
     )
+    rewritten_query: str = Field(description="融入以上冲突解析后偏好改写的旅行查询；若无相关画像则原样返回")
 
 
 # ─── Profile Update Agent Schema ──────────────────────────────

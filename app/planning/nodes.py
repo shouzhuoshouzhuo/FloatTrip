@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, timedelta
 from typing import Annotated, Any
+
+logger = logging.getLogger(__name__)
 
 from app.llm.deepseek import build_structured_deepseek
 from app.providers.amap.poi import search_around_pois
@@ -15,6 +18,7 @@ from app.planning.schemas import (
     RewrittenQuery,
     RouteReview,
     SingleDayMealPick,
+    TimeCheckResult,
     TravelPlanState,
     TravelRoute,
 )
@@ -41,6 +45,7 @@ from app.planning.prompts import (
     PLANNER_SYSTEM,
     QUERY_REWRITE_SYSTEM,
     REVIEWER_SYSTEM,
+    TIME_CHECK_SYSTEM,
     WEEKDAYS,
 )
 from app.core.database import get_conn
@@ -329,14 +334,20 @@ def make_reviewer_node(model_name: str | None):
             if weather_text else "\n（无天气信息）\n"
         )
 
-        # 历轮沟通记录：让 Reviewer 知道自己之前提过哪些紧急问题、是否已被修复
+        # 历轮沟通记录：让 Reviewer 知道自己之前提过哪些非时间类问题、是否已被修复
         dialogue_block = ""
         if state.planner_reviewer_dialogue:
-            dialogue_text = "\n".join(state.planner_reviewer_dialogue)
-            dialogue_block = (
-                f"\n\n【历轮沟通记录（检查你之前标注的【紧急必须优先改】是否已被修复；"
-                f"未修复则继续标注紧急，已修复则审查新问题）】\n{dialogue_text}"
-            )
+            # 过滤掉 time_check 相关的对话，避免 reviewer 看到时间冲突信息
+            non_time_lines = [
+                line for line in state.planner_reviewer_dialogue
+                if "[time_check" not in line
+            ]
+            if non_time_lines:
+                dialogue_text = "\n".join(non_time_lines)
+                dialogue_block = (
+                    f"\n\n【历轮沟通记录（检查你之前标注的问题是否已被修复；"
+                    f"未修复则继续指出，已修复则审查新问题）】\n{dialogue_text}"
+                )
 
         prompt = (
             f"目的地：{state.destination}，共 {state.days} 天，每天上限 {state.max_per_day}。\n"
@@ -346,17 +357,37 @@ def make_reviewer_node(model_name: str | None):
             f"候选景点池：\n{format_spots_for_llm(state.pois)}\n\n"
             f"待评审路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
             f"系统客观预检（请据此判断）：\n{facts}"
-            f"{dialogue_block}\n\n请评审并给出结论。"
+            f"{dialogue_block}\n\n"
+            f"请评审并给出结论。⚠️ 开放时间和闭馆日由 time_check 专项 Agent 单独核查，"
+            f"你不要评审开放时间相关问题。"
         )
         result: RouteReview = invoke_structured(llm, [("system", REVIEWER_SYSTEM), ("human", prompt)])
         approved = result.approved and not bad_unknown
         verdict  = "✅通过" if approved else "❌打回"
-        note = f"[第{state.review_round}轮] Reviewer {verdict}（{result.score}分）：{result.route_modify_opinion[:50]}"
+
+        # ── 后端日志：推理过程 + 审查结论（不进 history / planner_reviewer_dialogue）──
+        logger.debug(
+            "[Reviewer 第%d轮] 推理过程：\n%s",
+            state.review_round, result.reasoning,
+        )
+        logger.info(
+            "[Reviewer 第%d轮] %s（%d分）opinion=%r  issues=%r",
+            state.review_round, verdict, result.score,
+            result.route_modify_opinion or "(无)", result.issues,
+        )
+
+        # 完整写入 reviewer 意见，不截断，让用户在规划日志里看到完整评审过程
+        opinion_full = result.route_modify_opinion or "(无意见)"
+        issues_full  = ("；".join(result.issues)) if result.issues else ""
+        note = (
+            f"[第{state.review_round}轮] Reviewer {verdict}（{result.score}分）：{opinion_full}"
+            + (f"\n  → 问题列表：{issues_full}" if issues_full else "")
+        )
 
         # 追加本轮 Reviewer 记录到共享对话
         reviewer_line = (
             f"[第{state.review_round}轮] Reviewer {'通过' if approved else '打回'}"
-            f"（{result.score}分）：{result.route_modify_opinion[:100] or '(无意见)'}"
+            f"（{result.score}分）：{result.route_modify_opinion or '(无意见)'}"
         )
         return {
             "approved": approved,
@@ -371,18 +402,138 @@ def make_reviewer_node(model_name: str | None):
 
 
 def route_after_review(state: TravelPlanState) -> str:
-    """reviewer 通过时进餐搜索；否则永远把球还给 planner（出口由 route_after_planner 控制）。"""
-    if state.approved:
-        return "meal_search"
+    """主循环结束（通过 或 达最大轮数）→ time_check；否则还给 planner。
+
+    终止循环的判断从 route_after_planner 移到这里，确保每一份最终路线都经过 reviewer 评估。
+    然后进入 time_check 阶段独立核查开放时间，reviewer 不再处理时间问题。
+    """
+    if state.approved or state.review_round > state.max_review_rounds:
+        return "time_check"
     return "planner"
 
 
 def route_after_planner(state: TravelPlanState) -> str:
-    """planner 递增 review_round 后判定：超出上限则跳餐搜索（末轮 planner 已响应过），
-    否则继续送 reviewer。"""
-    if state.review_round > state.max_review_rounds:
-        return "meal_search"
+    """planner 输出的下一跳：
+
+    - 已进入 time_check 阶段（time_check_done=True）：回 time_check 重新核查时间
+    - 否则：进 reviewer 走主循环
+
+    设计：time_check_done 是单向门——一旦置 True，planner 永远不再回 reviewer。
+    """
+    if state.time_check_done:
+        return "time_check"
     return "reviewer"
+
+
+def route_after_time_check(state: TravelPlanState) -> str:
+    """time_check 输出的下一跳：
+
+    - 无违规 → meal_search（时间合法）
+    - 达 max_time_check_rounds 上限 → meal_search（带剩余问题前进，由 finalize 透传给前端）
+    - 否则 → planner 修正
+    """
+    if not state.time_violations:
+        return "meal_search"
+    if state.time_check_round >= state.max_time_check_rounds:
+        return "meal_search"
+    return "planner"
+
+
+# ─── time_check 专项 Agent ──────────────────────────────────
+
+def make_time_check_node(model_name: str | None):
+    """开放时间核查专家 Agent：CoT 推理 + 仅输出违规。
+
+    职责单一——只判断每个景点的 start_time/end_time 是否符合开放时间和闭馆日；
+    其他维度（地理、习惯、天气、合法性）一概不管。
+    """
+    llm = build_structured_deepseek(TimeCheckResult, model=model_name, temperature=0)
+
+    def time_check(state: TravelPlanState) -> dict[str, Any]:
+        rnd = state.time_check_round + 1
+
+        # 拼当天日期/星期 + 每个景点的 安排时段 + 开放原文
+        open_map = {s["name"]: (s.get("open_time") or "未知") for s in state.pois}
+        lines: list[str] = []
+        for day in state.route:
+            day_no = day.get("day")
+            for spot in day.get("spots", []):
+                lines.append(
+                    f"  Day{day_no} {spot.get('name')} 安排 "
+                    f"{spot.get('start_time')}-{spot.get('end_time')} | "
+                    f"开放原文：{open_map.get(spot.get('name'), '未知')}"
+                )
+        route_block = "\n".join(lines) if lines else "  （路线为空）"
+
+        prompt = (
+            f"目的地：{state.destination}"
+            f"{_travel_dates_block(state)}\n\n"
+            f"待核查的景点安排（每行格式：Day N 景点名 安排 start-end | 开放原文：...）：\n"
+            f"{route_block}\n\n"
+            f"请按 schema 字段顺序输出：先 reasoning 逐景点推理，再 violations 仅写确认违规的项。"
+        )
+
+        try:
+            result: TimeCheckResult = invoke_structured(
+                llm, [("system", TIME_CHECK_SYSTEM), ("human", prompt)], retries=3
+            )
+        except RuntimeError:
+            # 静默降级：不阻塞主流程，让用户能拿到行程
+            logger.warning("[time_check 第%d轮] LLM 调用失败，跳过时间核查", rnd)
+            return {
+                "time_violations": [],
+                "time_check_done": True,
+                "time_check_round": rnd,
+                "history": state.history + [f"[time_check 第{rnd}轮] LLM 调用失败，跳过时间核查"],
+            }
+
+        # ── 后端日志：推理过程 + 审查结论 ──────────────────────────
+        logger.debug(
+            "[time_check 第%d轮] 推理过程：\n%s",
+            rnd, result.reasoning,
+        )
+        if result.violations:
+            violation_lines = "\n".join(
+                f"  Day{v.day} {v.spot_name}：{v.detail}" for v in result.violations
+            )
+            logger.info(
+                "[time_check 第%d轮] ❌ 发现 %d 处违规：\n%s",
+                rnd, len(result.violations), violation_lines,
+            )
+        else:
+            logger.info("[time_check 第%d轮] ✅ 无违规，时间安排全部合法", rnd)
+
+        violations_dicts = [v.model_dump() for v in result.violations]
+        if not violations_dicts:
+            return {
+                "time_violations": [],
+                "time_check_done": True,
+                "time_check_round": rnd,
+                "history": state.history + [f"[time_check 第{rnd}轮] ✅ 无违规"],
+                "planner_reviewer_dialogue": state.planner_reviewer_dialogue
+                    + [f"[time_check 第{rnd}轮] 无违规"],
+            }
+
+        # 有违规：组装定向修正指令给 planner
+        detail_lines = "\n".join(
+            f"- Day{v.day} {v.spot_name}：{v.detail}" for v in result.violations
+        )
+        opinion = (
+            f"【开放时间修正（第{rnd}轮）】仅修正以下时段冲突，其余安排保持不变：\n{detail_lines}"
+        )
+        note = f"[time_check 第{rnd}轮] 发现 {len(violations_dicts)} 处冲突：\n{detail_lines}"
+
+        return {
+            "time_violations": violations_dicts,
+            "time_check_done": True,
+            "time_check_round": rnd,
+            "route_modify_opinion": opinion,
+            "approved": False,  # 有时间问题就视为未通过
+            "history": state.history + [note],
+            "planner_reviewer_dialogue": state.planner_reviewer_dialogue + [note],
+        }
+
+    return time_check
 
 
 # ─── 餐饮搜索 ────────────────────────────────────────────────
@@ -406,7 +557,7 @@ def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
                 warnings.append(f"Day{day_no} {meal} 无中心景点坐标")
                 entry[meal] = {"anchor": anchor["name"] if anchor else None, "candidates": []}
                 continue
-            raw   = search_around_pois(center, api_key, types="餐饮服务", radius=1500, offset=20)
+            raw   = search_around_pois(center, api_key, types="餐饮服务", radius=1000, offset=20)
             cands = [r for r in (restaurant_to_dict(p) for p in raw) if r][:20]
             if not cands:
                 warnings.append(f"Day{day_no} {meal}（{anchor['name']} 周边）无餐饮")
@@ -472,12 +623,16 @@ def make_meal_recommend_node(model_name: str | None):
             )
 
         def _lookup(name: str, cands_dict: dict[str, Any], cands_list: list[dict]) -> dict | None:
-            """子串匹配 → 取评分最高，不做精确匹配（LLM 经常改写名称后缀）。"""
-            if not name:
-                return None
-            for key, val in cands_dict.items():
-                if name in key or key in name:
-                    return val
+            """子串匹配候选餐厅；LLM 名称改写时宽松匹配（含子串即算）。
+
+            name 为空字符串代表"LLM 认为无偏好匹配而主动放弃"，不等于候选列表为空。
+            ⚠️ 不能在 name 为空时提前 return None——那会让有 20 家候选的餐次也显示"暂无"。
+            正确语义：只要 cands_list 非空就必有返回，None 只意味着候选列表确实为空。
+            """
+            if name:
+                for key, val in cands_dict.items():
+                    if name in key or key in name:
+                        return val
             return cands_list[0] if cands_list else None
 
         pick_map = {p.day: p for p in day_picks}
@@ -614,8 +769,11 @@ def _finalize_impl(state: TravelPlanState) -> dict[str, Any]:
         "review_rounds": state.review_round,
         "weather_forecast": state.weather_forecast,
         "weather_note": state.weather_note,
-        # 达最大迭代轮数仍未通过时，透传 reviewer 最后一轮问题给前端
-        "route_issues": state.reviewer_issues if not state.approved else [],
+        # 透传给前端的"出行注意事项"：来自 reviewer 最后一轮的 issues，
+        # 已是给用户看的友好出行提醒。time_check 的 violations 不属于注意事项——
+        # 它要么被 planner 修完（time_violations 清空），要么属于极端兜底情况（达轮数上限未清完），
+        # 不是给用户的常规提醒。
+        "route_issues": list(state.reviewer_issues or []),
         "days": days_out,
     }
     return {"final_plan": final_plan, "history": state.history + ["finalize：已组装最终计划"]}

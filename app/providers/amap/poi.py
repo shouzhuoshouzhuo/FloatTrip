@@ -26,7 +26,7 @@ def search_around_pois(
     *,
     types: str = "",
     keyword: str = "",
-    radius: int = 1500,
+    radius: int = 1000,
     offset: int = 6,
     max_retries: int = 3,
 ) -> list[dict[str, Any]]:

@@ -17,10 +17,12 @@ from app.planning.nodes import (
     make_planner_node,
     make_query_rewrite_node,
     make_reviewer_node,
+    make_time_check_node,
     meal_search_node,
     route_after_intent,
     route_after_planner,
     route_after_review,
+    route_after_time_check,
 )
 
 
@@ -39,6 +41,7 @@ def build_graph(
     g.add_node("attraction_search", attraction_search_node)
     g.add_node("planner",          make_planner_node(model_name))
     g.add_node("reviewer",         make_reviewer_node(model_name))
+    g.add_node("time_check",       make_time_check_node(model_name))
     g.add_node("meal_search",      meal_search_node)
     g.add_node("meal_recommend",   make_meal_recommend_node(model_name))
     g.add_node("finalize",         make_finalize_node(memory_writer))
@@ -50,14 +53,19 @@ def build_graph(
     )
     g.add_edge("query_rewrite",    "attraction_search")
     g.add_edge("attraction_search", "planner")
-    # planner 递增 review_round 后决定：是继续送 reviewer 还是已超轮数直接进餐搜索
+    # planner 输出：time_check_done=False 时进 reviewer 走主循环；True 时进 time_check 重新核查
     g.add_conditional_edges(
         "planner", route_after_planner,
-        {"reviewer": "reviewer", "meal_search": "meal_search"},
+        {"reviewer": "reviewer", "time_check": "time_check"},
     )
-    # reviewer 通过则进餐搜索；打回则给 planner 一次响应机会（出口在 planner 侧）
+    # reviewer：通过或达最大轮数 → time_check 阶段；否则打回 planner
     g.add_conditional_edges(
         "reviewer", route_after_review,
+        {"planner": "planner", "time_check": "time_check"},
+    )
+    # time_check：无违规/达上限 → meal_search；有违规且未达上限 → planner 修正
+    g.add_conditional_edges(
+        "time_check", route_after_time_check,
         {"planner": "planner", "meal_search": "meal_search"},
     )
     g.add_edge("meal_search",    "meal_recommend")
@@ -80,6 +88,7 @@ _NODE_LABELS: dict[str, str] = {
     "attraction_search": "🗺 正在调用高德搜索景点池",
     "planner":           "✍️ 正在规划逐日行程",
     "reviewer":          "🔍 正在评审行程",
+    "time_check":        "⏱ 正在核查景点开放时间",
     "meal_search":       "🍽 正在搜索周边餐厅",
     "meal_recommend":    "🍴 正在为每天挑选餐厅",
     "finalize":          "📦 正在收敛生成最终行程",
@@ -103,14 +112,27 @@ def _stage_event(node: str, acc: dict[str, Any], upd: dict[str, Any]) -> dict[st
         rnd = acc.get("review_round") or 1
         ev["round"] = rnd
         ev["label"] = f"{label}：第 {rnd} 轮"
+    elif node == "time_check":
+        # on_chain_start 时 acc 中 time_check_round 是节点运行前的值，+1 得当前轮次
+        rnd = (acc.get("time_check_round") or 0) + 1
+        ev["round"] = rnd
+        ev["label"] = f"{label}（第 {rnd} 轮）"
     return ev
 
 
 # ─── 修改模式专用迷你图 ────────────────────────────────────────
 
+def _route_after_review_for_modification(state: TravelPlanState) -> str:
+    """修改流程专用：reviewer 通过/达最大轮数 → 直接进 meal_search（不走 time_check）。"""
+    if state.approved or state.review_round > state.max_review_rounds:
+        return "meal_search"
+    return "planner"
+
+
 def build_modification_graph(model_name: str | None = None, memory_writer=None):
     """迷你图：planner ⇄ reviewer（最多 2 轮）→ meal_search → meal_recommend → finalize。
     跳过 intent / attraction_search，直接从 checkpoint 恢复状态。
+    修改流程暂不接入 time_check 节点。
     """
     g = StateGraph(TravelPlanState)
     g.add_node("planner",        make_planner_node(model_name))
@@ -119,12 +141,9 @@ def build_modification_graph(model_name: str | None = None, memory_writer=None):
     g.add_node("meal_recommend", make_meal_recommend_node(model_name))
     g.add_node("finalize",       make_finalize_node(memory_writer))
     g.add_edge(START, "planner")
+    g.add_edge("planner", "reviewer")
     g.add_conditional_edges(
-        "planner", route_after_planner,
-        {"reviewer": "reviewer", "meal_search": "meal_search"},
-    )
-    g.add_conditional_edges(
-        "reviewer", route_after_review,
+        "reviewer", _route_after_review_for_modification,
         {"planner": "planner", "meal_search": "meal_search"},
     )
     g.add_edge("meal_search",    "meal_recommend")
@@ -321,7 +340,11 @@ async def run_stream(
         user_id=user_id,
     )
     init = TravelPlanState(query=query, profile_hint=profile_hint or None, **overrides)
-    config = {"recursion_limit": 2 * (init.max_review_rounds + 1) + 10}
+    # 主循环 planner⇄reviewer 最多 (max_review_rounds+1) 对节点；
+    # 时间修正 planner⇄time_check 最多 max_time_check_rounds 对节点；
+    # 其余非循环节点（intent/query_rewrite/attraction_search/meal_search/meal_recommend/finalize）+ 缓冲
+    config = {"recursion_limit":
+        2 * (init.max_review_rounds + 1) + 2 * init.max_time_check_rounds + 10}
 
     acc: dict[str, Any] = init.model_dump()
     async for event in app.astream_events(init, config=config, version="v2"):

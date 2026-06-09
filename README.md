@@ -78,11 +78,16 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
    ▼
 [Planner Agent] ──────────────────────────┐
    │                                      │
-   ▼                                      │ 评审不通过 (最多 N 轮)
+   ▼                                      │ 评审不通过（最多 N 轮）
 [Reviewer Agent] ─────────────────────────┘
-   │ 通过
+   │ 通过 / 达上限
    ▼
-[高德周边餐饮搜索]
+[Time Check Agent] ←──────────────────────┐
+   │                                      │ 有时间冲突（最多 M 轮）
+   │ 无冲突 / 达上限                      │
+   │                              [Planner Agent]（仅修正时间）
+   ▼
+[高德周边餐饮搜索]（1000m 内）
    │
    ▼
 [Meal Recommend Agent]
@@ -91,7 +96,7 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 [Finalize]  →  含时刻表 + 餐厅 + 距离的完整行程
 ```
 
-**修改规划（迷你图）**：用户对已有行程提修改意见时，跳过 Intent/景点搜索，从上次规划的 checkpoint 恢复状态，只跑 `Planner ⇄ Reviewer（最多 2 轮）→ 餐饮 → Finalize`，Reviewer 验证 Planner 是否真正响应了修改意见。
+**修改规划（迷你图）**：用户对已有行程提修改意见时，跳过 Intent/景点搜索，从上次规划的 checkpoint 恢复状态，只跑 `Planner ⇄ Reviewer（最多 2 轮）→ 餐饮 → Finalize`，Reviewer 验证 Planner 是否真正响应了修改意见（修改流程不接入 Time Check）。
 
 **技术栈**
 
@@ -230,10 +235,16 @@ Intent 阶段自动拉取高德天气预报（复用已有 `AMAP_API_KEY`），�
 **7. 前端地图动线可视化**
 后端通过 `GET /api/config` 仅向前端下发高德 **JS API** 密钥（不暴露敏感的 REST `AMAP_API_KEY`），前端按天用高德地图绘制景点标注与连线动线，地图占据半屏，未配置 JS Key 时地图区域降级为友好提示，不影响行程文本展示。
 
-**8. Redis 缓存层（可选，优雅降级）**
+**8. Time Check 专项 Agent（开放时间二次修正循环）**
+主流程 Planner-Reviewer 循环结束后，新增 `time_check` 节点专门核查每个景点的安排时段是否与开放时间/闭馆日冲突。它使用 CoT 推理（先写完整逐景点推理过程，再从结论中筛选违规），输出定向修正指令交给 Planner 修正，最多循环 `max_time_check_rounds` 轮（默认 3）。开放时间问题完全由该 Agent 处理，Reviewer 不再涉及，避免双重干预震荡。
+
+**9. Reviewer 职责精简 + 友好提醒机制**
+Reviewer 不再负责开放时间检查（交给 Time Check）。`RouteReview` schema 拆成两个输出字段：`route_modify_opinion`（技术诊断，给 Planner 看）和 `issues`（友好出行提醒，给用户看，禁止"违规/冲突"等批判词）。`day_proximity_report` 增加跨天中心间距计算，不足 5km 时自动标注⚠️，客观检测多天行程在同一区域反复横跳的问题。
+
+**10. Redis 缓存层（可选，优雅降级）**
 高德天气（TTL=4h）和 POI 搜索（TTL=12h）结果自动写入 Redis，重复请求直接命中缓存。`REDIS_URL` 未配置或 Redis 不可用时，`cache.py` 静默降级为透传，整个功能无任何副作用，不影响主流程稳定性。
 
-**9. 路线优化（暴力枚举最短路径）**
+**11. 路线优化（暴力枚举最短路径）**
 规划完成后，用户可对任意一天点击"优化路线"：后端枚举 daytime 景点全排列，以 haversine 距离（含午/晚餐地理位置）选最短路径，evening 景点固定末位，重算每段 `dist_from_prev_km` 并时间槽顺序对齐后写回 DB。若优化距离与原始差距 < 0.05 km 则标记 `improved=false`。支持一键回退到 Agent 原始顺序（`POST /api/plan/revert_day`），前端在首次优化时保存原始 timeline 快照，确保回退数据准确。
 
 ---

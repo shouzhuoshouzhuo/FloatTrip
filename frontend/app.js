@@ -119,6 +119,16 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
 // 初始化导航栏（不依赖下方 DOM 引用）
 updateNavUser();
 
+// 页面加载时校验 token 有效性，避免 localStorage 残留旧 token 显示为已登录
+(async () => {
+  const a = getAuth();
+  if (!a || !a.token) return;
+  try {
+    const res = await fetch('/api/profile', { headers: authHeaders() });
+    if (res.status === 401) { clearAuth(); updateNavUser(); }
+  } catch { /* 网络错误时保留现状，不误清除 */ }
+})();
+
 /* ─── DOM 引用 ─────────────────────────────────── */
 const queryInput   = document.getElementById('query-input');
 const submitBtn    = document.getElementById('submit-btn');
@@ -602,11 +612,12 @@ function renderRouteIssuesCard(issues) {
   card.id = 'route-issues-card';
   card.className = 'route-issues-card';
   card.innerHTML = `
-    <div class="route-issues-title">⚠️ 路线注意事项（已达最大优化轮次）</div>
+    <div class="route-issues-title">📌 出行注意事项</div>
     <ul class="route-issues-list">
       ${issues.map(i => `<li>${escHtml(i)}</li>`).join('')}
     </ul>`;
-  document.getElementById('history-details').insertAdjacentElement('beforebegin', card);
+  // 插到 plan-header 下方，第一眼就能看到，而不是埋在日志前
+  document.querySelector('.plan-header').insertAdjacentElement('afterend', card);
 }
 
 /* ─── 主渲染入口 ───────────────────────────────── */
@@ -622,7 +633,8 @@ function renderPlan(data) {
 
   renderWeatherNoteBanner(data.plan.weather_note);
 
-  renderRouteIssuesCard(!data.plan.approved ? (data.plan.route_issues || []) : []);
+  // route_issues 是 reviewer 给用户的出行提醒，与 approved 无关——通过时也可能有提醒（如『带伞』）
+  renderRouteIssuesCard(data.plan.route_issues || []);
 
   showSection('result');
   updateSubmitMode();
