@@ -181,6 +181,9 @@ class TravelPlanState(BaseModel):
     meal_candidates: list[dict[str, Any]] = Field(default_factory=list)
     meals: list[dict[str, Any]] = Field(default_factory=list)
 
+    # 景点游玩贴士（spot_tips 节点填充：景点名 → 贴士文本）
+    spot_tips: dict[str, str] = Field(default_factory=dict)
+
     # Reviewer 最后一轮发现的问题（最大轮数未通过时透传给前端）
     reviewer_issues: list[str] = Field(default_factory=list)
 
@@ -208,6 +211,41 @@ class TravelPlanState(BaseModel):
     final_plan: Optional[dict[str, Any]] = None
 
 
+# ─── Spot Tips Agent Schema ───────────────────────────────────
+
+class SpotTipItem(BaseModel):
+    """单个景点的游玩贴士。"""
+
+    name: str = Field(description="景点名，必须与输入行程中的景点名完全一致（逐字复制，不要改写）")
+    tip: str = Field(
+        description=(
+            "该景点的游玩注意事项，30~70字，必须具体可执行："
+            "结合当天天气给穿戴/装备建议（雨天带伞穿防滑鞋、高温防晒补水），"
+            "结合景点属性给准备建议（爬山穿运动鞋带水和干粮、寺庙注意着装、夜景注意保暖），"
+            "以及该景点独有的游玩常识（如大熊猫清晨活跃建议早去、热门馆需提前预约）。"
+            "禁止『祝您玩得开心』之类的空话套话。"
+        )
+    )
+
+
+class SpotTipsResult(BaseModel):
+    """Spot Tips Agent 的输出。
+
+    字段顺序即生成顺序：先 reasoning 逐景点结合天气与属性分析，再输出 tips 结论。
+    """
+
+    reasoning: str = Field(
+        description=(
+            "逐景点的简要分析：当天天气如何、景点是室内还是户外/是否爬山/有无特殊游玩常识，"
+            "据此决定要提醒什么。每个景点 1-2 句即可。"
+        )
+    )
+    tips: list[SpotTipItem] = Field(
+        default_factory=list,
+        description="每个景点一条贴士，覆盖输入行程中的全部景点，名称逐字一致",
+    )
+
+
 # ─── Query Rewrite Agent Schema ───────────────────────────────
 
 class RewrittenQuery(BaseModel):
@@ -231,8 +269,12 @@ class RewrittenQuery(BaseModel):
 # ─── Profile Update Agent Schema ──────────────────────────────
 
 class ProfileUpdateResult(BaseModel):
-    """Profile Update Agent 的冲突解析输出（不含 visited_destinations，由代码维护）。"""
-    attraction_prefs: list[str] = Field(default_factory=list, description="景点偏好列表，最多 20 条")
-    food_prefs: list[str] = Field(default_factory=list, description="餐饮偏好列表，最多 20 条")
-    habit_prefs: list[str] = Field(default_factory=list, description="游玩习惯/节奏列表，最多 20 条")
-    change_log: list[str] = Field(default_factory=list, description="每条变更说明")
+    """Profile Update Agent 的冲突解析输出（不含 visited_destinations，由代码维护）。
+
+    CoT 顺序：change_log 必须排在三个列表之前——先写明计划的每条变更，
+    再输出落实了这些变更的完整列表。曾出现 change_log 声称新增但列表没加的"只说不做"问题。
+    """
+    change_log: list[str] = Field(default_factory=list, description="每条变更说明（先写这里，下面的列表必须落实这些变更）")
+    attraction_prefs: list[str] = Field(default_factory=list, description="景点偏好完整列表（含 change_log 中的变更），最多 20 条")
+    food_prefs: list[str] = Field(default_factory=list, description="餐饮偏好完整列表（含 change_log 中的变更），最多 20 条")
+    habit_prefs: list[str] = Field(default_factory=list, description="游玩习惯/节奏完整列表（含 change_log 中的变更），最多 20 条")

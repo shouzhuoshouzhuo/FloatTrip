@@ -3,6 +3,7 @@ todos.md
 tests/eval/fixtures/
 tests/eval/transcripts/
 tests/eval/data/
+tests/eval/sweep_results/
 CLAUDE.md
 __pycache__/
 *.py[cod]
@@ -17,3 +18,4 @@ resume.md
 eval*
 qr_eval_report.md
 .qoder/
+.gstack/

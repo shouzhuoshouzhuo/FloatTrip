@@ -18,6 +18,7 @@ from app.planning.schemas import (
     RewrittenQuery,
     RouteReview,
     SingleDayMealPick,
+    SpotTipsResult,
     TimeCheckResult,
     TravelPlanState,
     TravelRoute,
@@ -45,6 +46,7 @@ from app.planning.prompts import (
     PLANNER_SYSTEM,
     QUERY_REWRITE_SYSTEM,
     REVIEWER_SYSTEM,
+    SPOT_TIPS_SYSTEM,
     TIME_CHECK_SYSTEM,
     WEEKDAYS,
 )
@@ -134,16 +136,16 @@ def make_intent_node(model_name: str | None, profile_hint: str = ""):
 
         missing: list[str] = []
         if not destination:
-            missing.append("destination（目的地）")
+            missing.append("目的地")
         if not start:
-            missing.append("travel_start_date（开始日期）")
+            missing.append("出行开始日期")
         if not end:
-            missing.append("travel_end_date（结束日期）")
+            missing.append("出行结束日期")
 
         days = 0
         if start and end:
             if end < start:
-                missing.append("travel_end_date（结束日期早于开始日期）")
+                missing.append("结束日期早于开始日期")
             else:
                 days = (end - start).days + 1
 
@@ -682,6 +684,62 @@ def make_meal_recommend_node(model_name: str | None):
 
 # ─── finalize ────────────────────────────────────────────────
 
+# ─── 景点游玩贴士 ─────────────────────────────────────────────
+
+def make_spot_tips_node(model_name: str | None):
+    """为行程中每个景点生成游玩注意事项（结合当天天气 + 景点属性 + 独有常识）。
+
+    非关键路径：LLM 失败时降级为无贴士，不阻塞行程生成。
+    """
+    llm = build_structured_deepseek(SpotTipsResult, model=model_name, temperature=0)
+
+    def spot_tips_node(state: TravelPlanState) -> dict[str, Any]:
+        spot_names: list[str] = []
+        lines: list[str] = []
+        for day in state.route:
+            day_no = day.get("day")
+            the_date = ""
+            if state.travel_start_date and day_no:
+                d = state.travel_start_date + timedelta(days=day_no - 1)
+                the_date = f"{d.isoformat()} {WEEKDAYS[d.weekday()]}"
+            lines.append(f"第 {day_no} 天（{the_date or '日期未知'}）：")
+            for spot in day.get("spots", []):
+                spot_names.append(spot["name"])
+                lines.append(
+                    f"  · {spot['name']}（{spot.get('period')} {spot.get('start_time')}–{spot.get('end_time')}）"
+                )
+        if not spot_names:
+            return {}
+
+        weather_text = format_weather_for_llm(state.weather_forecast) or "（无可用天气预报）"
+        prompt = (
+            f"目的地：{state.destination}\n\n"
+            "行程：\n" + "\n".join(lines) + "\n\n"
+            f"逐天天气预报：\n{weather_text}"
+        )
+        try:
+            result: SpotTipsResult = invoke_structured(
+                llm, [("system", SPOT_TIPS_SYSTEM), ("human", prompt)]
+            )
+        except RuntimeError:
+            return {"history": state.history + ["spot_tips：贴士生成失败，已跳过"]}
+
+        # 名称匹配：先精确，再子串宽松兜底（LLM 偶发轻微改写名称）
+        valid = set(spot_names)
+        tips = {t.name: t.tip.strip() for t in result.tips if t.name in valid and t.tip.strip()}
+        for t in result.tips:
+            if t.name not in valid and t.tip.strip():
+                for name in valid:
+                    if name not in tips and (t.name in name or name in t.name):
+                        tips[name] = t.tip.strip()
+                        break
+
+        note = f"spot_tips：为 {len(tips)}/{len(valid)} 个景点生成游玩贴士"
+        return {"spot_tips": tips, "history": state.history + [note]}
+
+    return spot_tips_node
+
+
 def make_finalize_node(memory_writer=None):
     def finalize_node(state: TravelPlanState) -> dict[str, Any]:
         result = _finalize_impl(state)
@@ -731,6 +789,7 @@ def _finalize_impl(state: TravelPlanState) -> dict[str, Any]:
                 "open_time": info.get("open_time"),
                 "photo": info.get("photo"),
                 "location": info.get("location"),
+                "tip": state.spot_tips.get(spot["name"]),
             })
             if spot.get("name") == morning_anchor_name and not lunch_inserted:
                 lunch_inserted = True
@@ -776,4 +835,7 @@ def _finalize_impl(state: TravelPlanState) -> dict[str, Any]:
         "route_issues": list(state.reviewer_issues or []),
         "days": days_out,
     }
-    return {"final_plan": final_plan, "history": state.history + ["finalize：已组装最终计划"]}
+    history = state.history + ["finalize：已组装最终计划"]
+    # 规划过程日志随 plan 一起落库，历史详情页回看时可还原完整规划过程
+    final_plan["history"] = history
+    return {"final_plan": final_plan, "history": history}

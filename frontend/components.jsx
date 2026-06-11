@@ -1,0 +1,383 @@
+// components.jsx — 卡片 / 地图 / 旅程加载动画
+
+/* ── 旅程加载动画 ─────────────────────────────── */
+// 旅程站点：后端多个节点可映射到同一站（NODE_TO_STEP），
+// planner⇄reviewer / planner⇄time_check 多轮循环时小人只前进不后退，
+// 轮次细节由实时文案（stage label）展示。
+const JOURNEY_STEPS = [
+  { key: "intent",            label: "理解出行意图",       detail: "目的地 / 日期 / 偏好 · 查询天气预报" },
+  { key: "query_rewrite",     label: "结合画像优化查询",   detail: "个性化改写中" },
+  { key: "attraction_search", label: "景点 Agent 检索",    detail: "搜索景点池" },
+  { key: "plan_review",       label: "规划 ⇄ 评审行程",    detail: "多轮打磨逐日时刻表" },
+  { key: "time_check",        label: "核查开放时间",        detail: "逐景点核对营业时段" },
+  { key: "meal",              label: "推荐沿线餐厅",        detail: "搜店 · 逐天挑选" },
+  { key: "finalize",          label: "生成最终行程",         detail: "即将完成…" },
+];
+// 后端节点名 → 旅程站点 key
+const NODE_TO_STEP = {
+  intent:            "intent",
+  query_rewrite:     "query_rewrite",
+  attraction_search: "attraction_search",
+  planner:           "plan_review",
+  reviewer:          "plan_review",
+  time_check:        "time_check",
+  meal_search:       "meal",
+  meal_recommend:    "meal",
+  spot_tips:         "finalize",
+  finalize:          "finalize",
+};
+Object.assign(window, { JOURNEY_STEPS, NODE_TO_STEP });
+
+function JourneyLoading({ steps, activeNode, doneNodes }) {
+  const pathRef = React.useRef(null);
+  const [pos, setPos] = React.useState({ x: 60, y: 150 });
+  const [waypoints, setWaypoints] = React.useState([]);
+  const N = steps.length;
+
+  const doneSet = new Set(doneNodes || []);
+  const activeIdx = steps.findIndex(s => s.key === activeNode);
+  const progressFrac = activeIdx < 0 ? 0 : (activeIdx + 0.5) / N;
+
+  React.useEffect(() => {
+    const p = pathRef.current;
+    if (!p) return;
+    const L = p.getTotalLength();
+    const wps = steps.map((_, i) => {
+      const pt = p.getPointAtLength((L * (i + 0.5)) / N);
+      return { x: pt.x, y: pt.y };
+    });
+    setWaypoints(wps);
+  }, [N]);
+
+  React.useEffect(() => {
+    const p = pathRef.current;
+    if (!p) return;
+    const L = p.getTotalLength();
+    const pt = p.getPointAtLength(L * Math.min(progressFrac, 0.995));
+    setPos({ x: pt.x, y: pt.y });
+  }, [progressFrac]);
+
+  return (
+    <div className="journey-scene">
+      <svg viewBox="0 0 880 220" preserveAspectRatio="xMidYMid meet">
+        <path d="M0 168 L90 110 L150 150 L230 86 L320 158 L400 122 L470 160 L560 100 L650 150 L730 116 L810 156 L880 130 L880 220 L0 220 Z"
+          fill="var(--bg-deep)" />
+        <path d="M0 190 Q220 158 440 178 T880 168 L880 220 L0 220 Z" fill="var(--map-park)" opacity=".8" />
+        <circle cx="790" cy="52" r="20" fill="var(--gold)" opacity=".75" />
+        <g transform="translate(36, 132)">
+          <line x1="0" y1="0" x2="0" y2="34" stroke="var(--ink-3)" strokeWidth="2.5" strokeLinecap="round" />
+          <path d="M1 1 l22 6 -22 6 z" fill="var(--ink-3)" />
+        </g>
+        <g transform="translate(842, 118)">
+          <line x1="0" y1="0" x2="0" y2="36" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" />
+          <path d="M1 1 l24 7 -24 7 z" fill="var(--accent)" />
+        </g>
+        <path
+          ref={pathRef}
+          d="M40 168 C 160 130, 230 196, 350 168 S 560 118, 660 156 S 800 162, 842 152"
+          fill="none" stroke="var(--ink-4)" strokeWidth="2.5"
+          strokeDasharray="2 9" strokeLinecap="round" opacity=".8"
+        />
+        {waypoints.map((wp, i) => {
+          const isDone = doneSet.has(steps[i].key);
+          const isActive = steps[i].key === activeNode;
+          const state = isDone ? "done" : isActive ? "active" : "todo";
+          return (
+            <g key={i} transform={`translate(${wp.x}, ${wp.y})`}>
+              <circle r={state === "todo" ? 4.5 : 6.5}
+                fill={state === "done" ? "var(--accent)" : "var(--card)"}
+                stroke={state === "todo" ? "var(--ink-4)" : "var(--accent)"}
+                strokeWidth="2.5"
+                style={{ transition: "all .4s" }} />
+              {state === "done" && (
+                <path d="M-2.6 0 l1.8 2.2 3.4 -4.4" stroke="var(--accent-ink)" strokeWidth="1.8" fill="none" strokeLinecap="round" />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          left: `${(pos.x / 880) * 100}%`,
+          top: `${(pos.y / 220) * 100}%`,
+          transform: "translate(-50%, -94%)",
+          transition: "left 1.1s cubic-bezier(.45,.05,.4,1), top 1.1s cubic-bezier(.45,.05,.4,1)",
+          width: "8.5%",
+          minWidth: 58,
+        }}
+      >
+        <Mascot size={64} pose={doneNodes && doneNodes.length >= N - 1 ? "cheer" : "walk"} style={{ width: "100%", height: "auto" }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── 地图面板 ──────────────────────────────────── */
+// SVG 示意地图：高德 JS 地图加载前的占位，以及未配置 AMAP_JS_KEY / 加载失败时的降级兜底
+function DayMap({ mapPoints, dayKey }) {
+  const pts = mapPoints || [];
+  const poly = pts.map((p) => `${p.x},${p.y}`).join(" ");
+  // 景点单独编号，餐厅不占号
+  let spotNo = 0;
+  const spotNums = pts.map(p => (p.kind === "meal" ? null : ++spotNo));
+
+  return (
+    <div className="map-canvas">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" key={dayKey}>
+        <g stroke="var(--line-2)" strokeWidth=".35">
+          {[15, 30, 45, 60, 75, 90].map((v) => (
+            <React.Fragment key={v}>
+              <line x1={v + 4} y1="-5" x2={v - 8} y2="105" />
+              <line x1="-5" y1={v} x2="105" y2={v - 6} />
+            </React.Fragment>
+          ))}
+        </g>
+        <path d="M-5 84 Q 24 72 46 84 T 105 80 L 105 105 L -5 105 Z" fill="var(--map-water)" />
+        <path d="M58 -5 q 10 18 -2 32 q -8 11 2 22" fill="none" stroke="var(--map-water)" strokeWidth="5" strokeLinecap="round" opacity=".8" />
+        <ellipse cx="22" cy="22" rx="16" ry="11" fill="var(--map-park)" />
+        <ellipse cx="84" cy="38" rx="13" ry="9" fill="var(--map-park)" />
+        <ellipse cx="44" cy="62" rx="9" ry="6" fill="var(--map-park)" opacity=".8" />
+        {poly && (
+          <polyline
+            points={poly} fill="none"
+            stroke="var(--accent)" strokeWidth=".9"
+            strokeDasharray="2 1.9" strokeLinecap="round" strokeLinejoin="round"
+            style={{ animation: "routeDash 30s linear infinite" }}
+          />
+        )}
+        <style>{`@keyframes routeDash { to { stroke-dashoffset: -92; } }`}</style>
+        {pts.map((p, i) => (
+          <g key={`${dayKey}-${i}`} className="map-pin-pop" style={{ "--pin-delay": `${i * 0.12 + 0.1}s`, transformOrigin: `${p.x}px ${p.y}px` }}>
+            {p.kind === "meal" ? (
+              <g>
+                <rect x={p.x - 2.6} y={p.y - 2.6} width="5.2" height="5.2" rx="1.2"
+                  fill="var(--second)" transform={`rotate(45 ${p.x} ${p.y})`} />
+                <circle cx={p.x} cy={p.y} r=".9" fill="var(--card)" />
+              </g>
+            ) : (
+              <g>
+                <circle cx={p.x} cy={p.y} r="3.4" fill="var(--accent)" />
+                <text x={p.x} y={p.y + 1.6} textAnchor="middle" fontSize="4.2" fontWeight="800" fill="var(--accent-ink)" fontFamily="var(--font-body)">{spotNums[i]}</text>
+              </g>
+            )}
+            <text className="map-pin-label" x={p.x} y={p.y - 5} textAnchor="middle" style={{ fontSize: "3.4px" }}>{p.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function MapPanel({ day, dayIdx }) {
+  const amapRef = React.useRef(null);
+  // null=尝试加载中（显示 SVG 占位） true=高德地图就绪 false=降级 SVG
+  const [amapReady, setAmapReady] = React.useState(null);
+  const hasGeo = (day.mapPoints || []).some(p => p.lat && p.lng);
+
+  // 点位签名：优化路线后同一天的点位顺序变化时也要重画地图
+  const ptsSig = (day.mapPoints || []).map(p => p.name).join("|");
+
+  React.useEffect(() => {
+    if (!hasGeo) { setAmapReady(false); return; }
+    let alive = true;
+    initAmapForDay(amapRef.current, day.mapPoints).then(ok => { if (alive) setAmapReady(ok); });
+    return () => { alive = false; };
+  }, [dayIdx, hasGeo, ptsSig]);
+
+  // 组件卸载时销毁地图实例
+  React.useEffect(() => () => destroyAmap(amapRef.current), []);
+
+  return (
+    <div className="map-frame">
+      <div className="map-head">
+        <span className="mh-title">Day {dayIdx + 1} 路线图</span>
+        {amapReady !== true && <span className="mh-note">地点示意 · 相对位置</span>}
+      </div>
+      <div style={{ position: "relative" }}>
+        <DayMap mapPoints={day.mapPoints} dayKey={dayIdx} />
+        {hasGeo && (
+          <div
+            ref={amapRef}
+            className="amap-host"
+            style={{
+              position: "absolute", inset: 0,
+              opacity: amapReady === true ? 1 : 0,
+              pointerEvents: amapReady === true ? "auto" : "none",
+              transition: "opacity .4s ease",
+            }}
+          />
+        )}
+      </div>
+      <div className="map-legend">
+        <span><span className="legend-dot" style={{ background: "var(--accent)" }}></span>景点</span>
+        <span><span className="legend-dot" style={{ background: "var(--second)", borderRadius: 2 }}></span>餐厅</span>
+        {amapReady !== true && <span style={{ marginLeft: "auto" }}>虚线为当日游览顺序</span>}
+      </div>
+    </div>
+  );
+}
+
+/* ── 时间轴卡片 ───────────────────────────────── */
+function photoUrl(seed, w = 640, h = 440) {
+  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/${w}/${h}`;
+}
+Object.assign(window, { photoUrl });
+
+function Thumb({ photo, seed, alt }) {
+  const [err, setErr] = React.useState(false);
+  const src = photo || (seed ? photoUrl(seed, 360, 280) : null);
+  if (!src || err) return <div className="t-thumb ph" aria-label={alt}>◌</div>;
+  return (
+    <div className="t-thumb" style={{ backgroundImage: `url('${src}')` }} aria-label={alt}>
+      <img src={src} alt="" style={{ display: "none" }} onError={() => setErr(true)} />
+    </div>
+  );
+}
+
+const PERIOD = {
+  morning:   { label: "上午", cls: "morning" },
+  afternoon: { label: "下午", cls: "afternoon" },
+  evening:   { label: "夜间", cls: "evening" },
+};
+
+function AttractionCard({ item }) {
+  const p = PERIOD[item.period] || PERIOD.morning;
+  return (
+    <div className="tl-node">
+      <div className="t-card">
+        <Thumb photo={item.photo} seed={item.seed} alt={item.name} />
+        <div className="t-body">
+          <div className="t-title">
+            {item.name}
+            <span className={`period-tag ${p.cls}`}>{p.label}</span>
+          </div>
+          <div className="t-meta">
+            {item.start && <span>{item.start}{item.end ? ` – ${item.end}` : ""}</span>}
+            {item.rating != null && <span className="star">★ {Number(item.rating).toFixed(1)}</span>}
+            {item.open && <span>开放 {item.open}</span>}
+          </div>
+          {item.note && <div className="tip-box">💡 {item.note}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MealCard({ item }) {
+  const label = item.type === "lunch" ? "午餐" : "晚餐";
+  if (item.no_restaurant) {
+    return (
+      <div className="tl-node is-meal">
+        <div className="t-card">
+          <div className="t-body">
+            <div className="t-title"><span className="meal-flag">{label}</span>该时段附近暂无餐厅数据</div>
+            <div className="t-note">建议出发前自行规划{label}，或让我换一片区域再找找。</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="tl-node is-meal">
+      <div className="t-card">
+        <Thumb photo={item.photo} seed={item.seed} alt={item.name} />
+        <div className="t-body">
+          <div className="t-title">
+            {item.name}
+            <span className="meal-flag">{label}</span>
+          </div>
+          <div className="t-meta">
+            {item.rating != null && <span className="star">★ {Number(item.rating).toFixed(1)}</span>}
+            {item.cost && <span>¥{item.cost} /人</span>}
+            {item.addr && <span>{item.addr}</span>}
+          </div>
+          {item.reason && <div className="reason-box">{item.reason}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Timeline({ items }) {
+  return (
+    <div className="timeline">
+      {items.map((item, i) => (
+        <React.Fragment key={i}>
+          {item.dist != null && item.dist > 0 && (
+            <div className="dist-pill">↕ {item.dist} km</div>
+          )}
+          {item.type === "attraction" ? <AttractionCard item={item} /> : <MealCard item={item} />}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+/* ── Sweep 评测侧栏 ───────────────────────────────── */
+const GRADERS = [
+  { key: "g1_closed_pool",           label: "G1 无幻觉" },
+  { key: "g2_time_check",            label: "G2 时间核查" },
+  { key: "g3_proximity",             label: "G3 地理跨度" },
+  { key: "g4_structure",             label: "G4 结构合法" },
+  { key: "g5_coverage",              label: "G5 覆盖完整" },
+  { key: "g6_weather",               label: "G6 天气合规" },
+  { key: "g7_convergence",           label: "G7 收敛" },
+  { key: "g8_time_check_efficiency", label: "G8 TC效率" },
+];
+
+function SweepEvalPanel({ code, reviewRounds, timeCheckRounds, profileUpdate, dialogue, overallPass, elapsedS }) {
+  const results = code?.results || {};
+  return (
+    <div className="sweep-eval-panel">
+      <div className={`sweep-verdict ${overallPass ? "pass" : "fail"}`}>
+        {overallPass ? "✅ 通过" : "❌ 未通过"}
+        {elapsedS != null && <span className="sweep-elapsed">{elapsedS}s</span>}
+      </div>
+
+      <div className="sweep-section-title">代码打分</div>
+      {GRADERS.map(({ key, label }) => {
+        const r = results[key];
+        if (!r) return null;
+        const isNA = !r.passed && r.detail?.includes("跳过");
+        return (
+          <React.Fragment key={key}>
+            <div className={`sweep-g-row ${isNA ? "na" : r.passed ? "pass" : "fail"}`}>
+              <span>{isNA ? "—" : r.passed ? "✅" : "❌"}</span>
+              <span>{label}</span>
+            </div>
+            {!r.passed && !isNA && <div className="sweep-g-detail">{r.detail}</div>}
+          </React.Fragment>
+        );
+      })}
+
+      <div className="sweep-section-title">流程</div>
+      <div className="sweep-stat">评审：{reviewRounds} 轮</div>
+      <div className="sweep-stat">time_check：{timeCheckRounds} 轮</div>
+
+      {profileUpdate && !profileUpdate.error && (
+        <>
+          <div className="sweep-section-title">画像更新</div>
+          {(profileUpdate.diff || []).length > 0
+            ? profileUpdate.diff.map((d, i) => <div key={i} className="sweep-profile-row">{d}</div>)
+            : <div className="sweep-profile-row sweep-na">无变更</div>}
+          {(profileUpdate.change_log || []).length > 0 && (
+            <details className="sweep-details">
+              <summary>变更理由</summary>
+              {profileUpdate.change_log.map((c, i) => <p key={i}>{c}</p>)}
+            </details>
+          )}
+        </>
+      )}
+
+      {(dialogue || []).length > 0 && (
+        <details className="sweep-details">
+          <summary>📜 规划对话</summary>
+          {dialogue.map((d, i) => <p key={i}>{d}</p>)}
+        </details>
+      )}
+    </div>
+  );
+}
+
+Object.assign(window, { JourneyLoading, DayMap, MapPanel, Timeline, Thumb, SweepEvalPanel });

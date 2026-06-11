@@ -17,6 +17,7 @@ from app.planning.nodes import (
     make_planner_node,
     make_query_rewrite_node,
     make_reviewer_node,
+    make_spot_tips_node,
     make_time_check_node,
     meal_search_node,
     route_after_intent,
@@ -44,6 +45,7 @@ def build_graph(
     g.add_node("time_check",       make_time_check_node(model_name))
     g.add_node("meal_search",      meal_search_node)
     g.add_node("meal_recommend",   make_meal_recommend_node(model_name))
+    g.add_node("spot_tips",        make_spot_tips_node(model_name))
     g.add_node("finalize",         make_finalize_node(memory_writer))
 
     g.add_edge(START,   "intent")
@@ -69,7 +71,8 @@ def build_graph(
         {"planner": "planner", "meal_search": "meal_search"},
     )
     g.add_edge("meal_search",    "meal_recommend")
-    g.add_edge("meal_recommend", "finalize")
+    g.add_edge("meal_recommend", "spot_tips")
+    g.add_edge("spot_tips",      "finalize")
     g.add_edge("finalize",       END)
 
     return g.compile()
@@ -91,6 +94,7 @@ _NODE_LABELS: dict[str, str] = {
     "time_check":        "⏱ 正在核查景点开放时间",
     "meal_search":       "🍽 正在搜索周边餐厅",
     "meal_recommend":    "🍴 正在为每天挑选餐厅",
+    "spot_tips":         "💡 正在为每个景点生成游玩贴士",
     "finalize":          "📦 正在收敛生成最终行程",
 }
 
@@ -139,6 +143,7 @@ def build_modification_graph(model_name: str | None = None, memory_writer=None):
     g.add_node("reviewer",       make_reviewer_node(model_name))
     g.add_node("meal_search",    meal_search_node)
     g.add_node("meal_recommend", make_meal_recommend_node(model_name))
+    g.add_node("spot_tips",      make_spot_tips_node(model_name))
     g.add_node("finalize",       make_finalize_node(memory_writer))
     g.add_edge(START, "planner")
     g.add_edge("planner", "reviewer")
@@ -147,20 +152,23 @@ def build_modification_graph(model_name: str | None = None, memory_writer=None):
         {"planner": "planner", "meal_search": "meal_search"},
     )
     g.add_edge("meal_search",    "meal_recommend")
-    g.add_edge("meal_recommend", "finalize")
+    g.add_edge("meal_recommend", "spot_tips")
+    g.add_edge("spot_tips",      "finalize")
     g.add_edge("finalize",       END)
     return g.compile()
 
 
 def build_confirm_graph(model_name: str | None = None, memory_writer=None):
-    """确认后续跑图：meal_search → meal_recommend → finalize。"""
+    """确认后续跑图：meal_search → meal_recommend → spot_tips → finalize。"""
     g = StateGraph(TravelPlanState)
     g.add_node("meal_search",    meal_search_node)
     g.add_node("meal_recommend", make_meal_recommend_node(model_name))
+    g.add_node("spot_tips",      make_spot_tips_node(model_name))
     g.add_node("finalize",       make_finalize_node(memory_writer))
     g.add_edge(START,            "meal_search")
     g.add_edge("meal_search",    "meal_recommend")
-    g.add_edge("meal_recommend", "finalize")
+    g.add_edge("meal_recommend", "spot_tips")
+    g.add_edge("spot_tips",      "finalize")
     g.add_edge("finalize",   END)
     return g.compile()
 
@@ -342,7 +350,7 @@ async def run_stream(
     init = TravelPlanState(query=query, profile_hint=profile_hint or None, **overrides)
     # 主循环 planner⇄reviewer 最多 (max_review_rounds+1) 对节点；
     # 时间修正 planner⇄time_check 最多 max_time_check_rounds 对节点；
-    # 其余非循环节点（intent/query_rewrite/attraction_search/meal_search/meal_recommend/finalize）+ 缓冲
+    # 其余非循环节点（intent/query_rewrite/attraction_search/meal_search/meal_recommend/spot_tips/finalize）+ 缓冲
     config = {"recursion_limit":
         2 * (init.max_review_rounds + 1) + 2 * init.max_time_check_rounds + 10}
 
