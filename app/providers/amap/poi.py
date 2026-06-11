@@ -104,6 +104,39 @@ def search_attraction_pois(
     return []
 
 
+def search_city_pois(
+    city: str,
+    api_key: str,
+    *,
+    keywords: str,
+    types: str,
+    offset: int = 8,
+) -> list[dict[str, Any]]:
+    """通用城市关键字搜索（手动编辑换点用）：类型可指定（景点/餐饮），不做缓存（由调用方决定）。"""
+    params: dict[str, str] = {
+        "key": api_key,
+        "keywords": keywords,
+        "types": types,
+        "city": city,
+        "citylimit": "true",
+        "offset": str(offset),
+        "page": "1",
+        "extensions": "all",
+        "output": "json",
+    }
+    url = f"{AMAP_TEXT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+    for attempt in range(4):
+        data = http_get_json(url)
+        if data.get("status") == "1":
+            pois = data.get("pois", [])
+            return pois if isinstance(pois, list) else []
+        info = str(data.get("info") or "未知错误")
+        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
+            raise RuntimeError(f"高德搜索失败：{info}")
+        time.sleep(1.2 * (attempt + 1))
+    return []
+
+
 # ─── POI 解析 ────────────────────────────────────────────────
 
 def parse_location(value: Any) -> dict[str, float] | None:
