@@ -19,3 +19,5 @@ eval*
 qr_eval_report.md
 .qoder/
 .gstack/
+.superpowers/
+.claude/

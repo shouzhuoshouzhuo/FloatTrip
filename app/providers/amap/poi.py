@@ -18,6 +18,22 @@ from app.providers.amap.client import (
 ATTRACTION_TYPE = "风景名胜"
 
 
+# ─── 内部辅助 ────────────────────────────────────────────────
+
+def _text_search_raw(url: str) -> list[dict[str, Any]]:
+    """带限流重试的高德文本搜索原始执行，返回 pois 列表。"""
+    for attempt in range(4):
+        data = http_get_json(url)
+        if data.get("status") == "1":
+            pois = data.get("pois", [])
+            return pois if isinstance(pois, list) else []
+        info = str(data.get("info") or "未知错误")
+        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
+            raise RuntimeError(f"高德搜索失败：{info}")
+        time.sleep(1.2 * (attempt + 1))
+    return []
+
+
 # ─── 周边搜索 ────────────────────────────────────────────────
 
 def search_around_pois(
@@ -90,18 +106,10 @@ def search_attraction_pois(
         "output": "json",
     }
     url = f"{AMAP_TEXT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
-    for attempt in range(4):
-        data = http_get_json(url)
-        if data.get("status") == "1":
-            pois = data.get("pois", [])
-            if page == 1 and pois:
-                set_cached(cache_key, pois, POI_TTL)
-            return pois if isinstance(pois, list) else []
-        info = str(data.get("info") or "未知错误")
-        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
-            raise RuntimeError(f"高德搜索失败：{info}")
-        time.sleep(1.2 * (attempt + 1))
-    return []
+    pois = _text_search_raw(url)
+    if page == 1 and pois:
+        set_cached(cache_key, pois, POI_TTL)
+    return pois
 
 
 def search_city_pois(
@@ -125,16 +133,7 @@ def search_city_pois(
         "output": "json",
     }
     url = f"{AMAP_TEXT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
-    for attempt in range(4):
-        data = http_get_json(url)
-        if data.get("status") == "1":
-            pois = data.get("pois", [])
-            return pois if isinstance(pois, list) else []
-        info = str(data.get("info") or "未知错误")
-        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
-            raise RuntimeError(f"高德搜索失败：{info}")
-        time.sleep(1.2 * (attempt + 1))
-    return []
+    return _text_search_raw(url)
 
 
 # ─── POI 解析 ────────────────────────────────────────────────
