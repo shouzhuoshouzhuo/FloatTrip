@@ -317,12 +317,12 @@ async function revertDay(plan_id, day, original_timeline) {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ plan_id, day, original_timeline }),
   });
-  if (!r.ok) throw new Error("回退失败");
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "回退失败"); }
   return r.json();
 }
 
 /* ── 手动编辑 ─────────────────────────────────────── */
-async function searchPoi(city, kw, kind) {
+async function searchPoi(city, kw, kind = "attraction") {
   const qs = new URLSearchParams({ city, kw, kind });
   const r = await fetch(`/api/poi/search?${qs}`, { headers: authHeaders() });
   if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "搜索失败"); }
