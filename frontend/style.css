@@ -862,7 +862,7 @@ img { display: block; }
   display: flex; align-items: center; gap: 10px;
   padding: 10px 14px; margin-bottom: 14px;
   background: var(--card); border: 1px solid var(--line-2); border-radius: 12px;
-  position: sticky; top: 10px; z-index: 20;
+  position: sticky; top: calc(var(--header-h) + 10px); z-index: 20;
 }
 .edit-toolbar-hint { flex: 1; font-size: .78rem; color: var(--ink-3); }
 .edit-save-err { flex: 1; font-size: .8rem; color: var(--accent); }
@@ -913,7 +913,7 @@ img { display: block; }
 .poi-search-bar { display: flex; gap: 8px; margin-top: 6px; }
 .poi-search-bar .form-input { flex: 1; }
 .poi-search-err { margin-top: 10px; font-size: .82rem; color: var(--accent); }
-.poi-results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.poi-results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
 .poi-result {
   text-align: left; padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--line-2); background: var(--card); color: inherit; cursor: pointer;
