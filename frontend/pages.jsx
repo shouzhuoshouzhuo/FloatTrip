@@ -437,7 +437,9 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
       setEditing(false); setDraft(null); draftRef.current = null;
       setOptimizedDays({});   // 手动编辑后旧的"优化前快照"失效
     } catch (e) {
-      setSaveErr(e.message || "保存失败，请重试");
+      // 网络层错误（Failed to fetch 等）对用户不可读，换成中文提示
+      const msg = e.message && !/fetch|network/i.test(e.message) ? e.message : "保存失败，请检查网络后重试";
+      setSaveErr(msg);
     } finally { setSaving(false); }
   };
 
