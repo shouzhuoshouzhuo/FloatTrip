@@ -158,3 +158,101 @@ class TestPoiSearch:
         _, headers = make_auth()
         r = client.get("/api/poi/search", params={"city": "南京", "kw": "x" * 101}, headers=headers)
         assert r.status_code == 400
+
+
+# ─── PUT /api/plan/{plan_id}/timeline ────────────────────────
+
+def make_plan(uid: str) -> str:
+    """直接落库一份两景点一餐厅的最小行程，返回 plan_id。"""
+    from app.core.database import get_conn
+    from app.core.memory import save_itinerary
+
+    plan = {
+        "destination": "南京", "start_date": "2026-06-10", "end_date": "2026-06-10",
+        "days_count": 1,
+        "days": [{
+            "day": 1, "date": "2026-06-10", "theme": "古迹",
+            "timeline": [
+                {"type": "attraction", "name": "中山陵", "start_time": "09:00", "end_time": "11:30",
+                 "period": "morning", "location": {"lat": 32.058, "lng": 118.848}},
+                {"type": "lunch", "name": "老门东小吃", "location": {"lat": 32.02, "lng": 118.79}},
+                {"type": "attraction", "name": "夫子庙", "start_time": "14:00", "end_time": "17:00",
+                 "period": "afternoon", "location": {"lat": 32.021, "lng": 118.788}},
+            ],
+        }],
+    }
+    with get_conn() as conn:
+        return save_itinerary(uid, plan, "测试查询", conn)
+
+
+class TestSaveTimeline:
+    def test_未登录401(self, client):
+        r = client.put("/api/plan/x/timeline", json={"days": []})
+        assert r.status_code == 401
+
+    def test_行程不存在404(self, client):
+        _, headers = make_auth()
+        r = client.put("/api/plan/不存在/timeline", json={"days": []}, headers=headers)
+        assert r.status_code == 404
+
+    def test_他人行程403(self, client):
+        owner, _ = make_auth()
+        pid = make_plan(owner)
+        _, other_headers = make_auth()
+        r = client.put(f"/api/plan/{pid}/timeline", json={"days": []}, headers=other_headers)
+        assert r.status_code == 403
+
+    def test_day越界400(self, client):
+        uid, headers = make_auth()
+        pid = make_plan(uid)
+        r = client.put(f"/api/plan/{pid}/timeline",
+                       json={"days": [{"day": 9, "timeline": []}]}, headers=headers)
+        assert r.status_code == 400
+
+    def test_缺type条目422(self, client):
+        uid, headers = make_auth()
+        pid = make_plan(uid)
+        r = client.put(f"/api/plan/{pid}/timeline",
+                       json={"days": [{"day": 1, "timeline": [{"name": "无类型"}]}]}, headers=headers)
+        assert r.status_code == 422
+
+    def test_景点缺name422(self, client):
+        uid, headers = make_auth()
+        pid = make_plan(uid)
+        r = client.put(f"/api/plan/{pid}/timeline",
+                       json={"days": [{"day": 1, "timeline": [{"type": "attraction"}]}]}, headers=headers)
+        assert r.status_code == 422
+
+    def test_保存成功_服务端重算距离_持久化(self, client):
+        from app.core.database import get_conn
+        from app.core.memory import load_itinerary
+        from app.planning.helpers import haversine_km
+
+        uid, headers = make_auth()
+        pid = make_plan(uid)
+
+        # 交换两景点顺序，并故意传入伪造的距离值
+        new_timeline = [
+            {"type": "attraction", "name": "夫子庙", "start_time": "09:00", "end_time": "11:30",
+             "period": "morning", "location": {"lat": 32.021, "lng": 118.788},
+             "dist_from_prev_km": 999},
+            {"type": "lunch", "name": "老门东小吃", "location": {"lat": 32.02, "lng": 118.79},
+             "dist_from_prev_km": 999},
+            {"type": "attraction", "name": "中山陵", "start_time": "14:00", "end_time": "17:00",
+             "period": "afternoon", "location": {"lat": 32.058, "lng": 118.848}},
+        ]
+        r = client.put(f"/api/plan/{pid}/timeline",
+                       json={"days": [{"day": 1, "timeline": new_timeline}]}, headers=headers)
+        assert r.status_code == 200
+
+        saved = r.json()["plan"]["days"][0]["timeline"]
+        assert [it["name"] for it in saved] == ["夫子庙", "老门东小吃", "中山陵"]
+        # 首条无距离；其余距离 = 服务端 haversine 重算（伪造的 999 被丢弃）
+        assert "dist_from_prev_km" not in saved[0]
+        expect = round(haversine_km({"lat": 32.021, "lng": 118.788}, {"lat": 32.02, "lng": 118.79}), 2)
+        assert saved[1]["dist_from_prev_km"] == expect
+
+        # 已持久化：重新加载与响应一致
+        with get_conn() as conn:
+            reloaded = load_itinerary(pid, conn)["plan"]
+        assert reloaded["days"][0]["timeline"] == saved

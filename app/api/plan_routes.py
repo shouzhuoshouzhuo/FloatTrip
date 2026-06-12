@@ -381,3 +381,74 @@ def poi_search(
 
     set_cached(cache_key, results, POI_TTL)
     return {"results": results}
+
+
+# ─── 手动编辑：保存逐天 timeline ─────────────────────────────────
+
+
+def _recalc_dists(timeline: list[dict]) -> None:
+    """服务端重算相邻条目距离，不信任前端传入的 dist_from_prev_km。"""
+    for i, item in enumerate(timeline):
+        if i == 0:
+            item.pop("dist_from_prev_km", None)
+            continue
+        prev_loc = timeline[i - 1].get("location")
+        cur_loc = item.get("location")
+        if prev_loc and cur_loc:
+            item["dist_from_prev_km"] = round(haversine_km(prev_loc, cur_loc), 2)
+        else:
+            item.pop("dist_from_prev_km", None)
+
+
+class TimelineDayPayload(BaseModel):
+    day: int                  # 1-based
+    timeline: list[dict]
+
+
+class SaveTimelineRequest(BaseModel):
+    days: list[TimelineDayPayload]
+
+
+@router.put("/api/plan/{plan_id}/timeline")
+def save_timeline(
+    plan_id: str,
+    req: SaveTimelineRequest,
+    authorization: str | None = Header(default=None),
+):
+    """保存手动编辑后的逐天 timeline。只合并 timeline，不允许前端覆盖 plan 其他字段。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="需要登录")
+    user_id = decode_token(authorization[7:])
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token 无效或已过期")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM itineraries WHERE id=?", (plan_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="行程不存在")
+        if row["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="无权访问")
+        data = load_itinerary(plan_id, conn)
+
+    plan = data["plan"]
+    day_by_no = {d.get("day"): d for d in plan.get("days", [])}
+    for payload in req.days:
+        day_obj = day_by_no.get(payload.day)
+        if not day_obj:
+            raise HTTPException(status_code=400, detail=f"第 {payload.day} 天不存在")
+        for item in payload.timeline:
+            if not isinstance(item, dict) or not item.get("type"):
+                raise HTTPException(status_code=422, detail="timeline 条目缺少 type")
+            if item["type"] == "attraction" and not item.get("name"):
+                raise HTTPException(status_code=422, detail="景点条目缺少 name")
+        _recalc_dists(payload.timeline)
+        day_obj["timeline"] = payload.timeline
+
+    with get_conn() as conn:
+        ok = update_plan_json(plan_id, user_id, plan, conn)
+    if not ok:
+        raise HTTPException(status_code=500, detail="保存失败")
+
+    return {"plan": plan}
