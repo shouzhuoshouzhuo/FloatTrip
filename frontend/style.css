@@ -857,6 +857,71 @@ img { display: block; }
 .sweep-empty .es-title { font-family: var(--font-display); font-size: 1.1rem; margin-bottom: 8px; color: var(--ink); }
 .sweep-empty code { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font-size: .8rem; }
 
+/* ── 行程手动编辑 ─────────────────────────────────── */
+.edit-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin-bottom: 14px;
+  background: var(--card); border: 1px solid var(--line-2); border-radius: 12px;
+  position: sticky; top: 10px; z-index: 20;
+}
+.edit-toolbar-hint { flex: 1; font-size: .78rem; color: var(--ink-3); }
+.edit-save-err { flex: 1; font-size: .8rem; color: var(--accent); }
+.edit-tool {
+  font-size: .82rem; padding: 6px 14px; border-radius: 8px;
+  border: 1px solid var(--line-2); background: var(--card); color: inherit; cursor: pointer;
+}
+.edit-tool:disabled { opacity: .4; cursor: default; }
+.edit-tool.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+
+.edit-list { display: flex; flex-direction: column; gap: 10px; }
+.edit-card {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--line-2); border-radius: 12px;
+  padding: 12px 14px;
+}
+.edit-ghost { opacity: .45; border-style: dashed; border-color: var(--accent); }
+.drag-grip { cursor: grab; color: var(--ink-4); font-size: 1.1rem; user-select: none; padding: 4px 2px; }
+.drag-grip:active { cursor: grabbing; }
+.edit-card-body { flex: 1; min-width: 0; }
+.edit-card-title { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.edit-dist { font-size: .72rem; color: var(--ink-3); font-weight: 400; }
+.edit-card-meta { display: flex; align-items: center; gap: 12px; margin-top: 4px; font-size: .8rem; color: var(--ink-3); flex-wrap: wrap; }
+.edit-card-acts { display: flex; gap: 6px; }
+.edit-act {
+  font-size: .75rem; padding: 4px 10px; border-radius: 99px;
+  border: 1px solid var(--line-2); background: transparent; color: inherit; cursor: pointer;
+}
+.edit-act.danger:hover { border-color: var(--accent); color: var(--accent); }
+
+.edit-empty { padding: 26px 0; text-align: center; color: var(--ink-3); font-size: .85rem; }
+.edit-add-row { display: flex; gap: 8px; margin-top: 12px; }
+.edit-add {
+  font-size: .8rem; padding: 7px 16px; border-radius: 99px;
+  border: 1px dashed var(--line-2); background: transparent; color: var(--ink-3); cursor: pointer;
+}
+.edit-add:hover { border-color: var(--accent); color: var(--accent); }
+
+.time-edit { display: inline-flex; align-items: center; gap: 4px; }
+.time-edit input[type="time"] {
+  border: 1px solid var(--line-2); border-radius: 6px; padding: 2px 6px;
+  background: var(--card); color: inherit; font: inherit; font-size: .78rem;
+}
+.time-edit.bad input { border-color: var(--accent); }
+.time-edit-err { font-size: .72rem; color: var(--accent); }
+
+.poi-search-card { width: min(520px, 92vw); }
+.poi-search-bar { display: flex; gap: 8px; margin-top: 6px; }
+.poi-search-bar .form-input { flex: 1; }
+.poi-search-err { margin-top: 10px; font-size: .82rem; color: var(--accent); }
+.poi-results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.poi-result {
+  text-align: left; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line-2); background: var(--card); color: inherit; cursor: pointer;
+}
+.poi-result:hover { border-color: var(--accent); }
+.poi-result-name { display: block; font-weight: 700; }
+.poi-result-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: .75rem; color: var(--ink-3); margin-top: 3px; }
+
 /* ── 响应式 ─────────────────────────────────────── */
 @media (max-width: 1100px) {
   .result-grid { grid-template-columns: 1fr; }
