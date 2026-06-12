@@ -387,7 +387,7 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
 
   const exitEdit = () => {
     if (dirty && !confirm("放弃未保存的修改？")) return;
-    setEditing(false); setDraft(null); draftRef.current = null; setSaveErr("");
+    setEditing(false); setDraft(null); draftRef.current = null; setSaveErr(""); setSearchTarget(null);
   };
 
   // 所有编辑操作的唯一入口：拷贝 → 变更 → 重算距离 → 压撤销栈
@@ -434,7 +434,7 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
       const adapted = adaptPlan(res.plan, currentUsername);
       adapted.logs = plan.logs;
       setPlan(adapted);
-      setEditing(false); setDraft(null); draftRef.current = null;
+      setEditing(false); setDraft(null); draftRef.current = null; setSearchTarget(null);
       setOptimizedDays({});   // 手动编辑后旧的"优化前快照"失效
     } catch (e) {
       // 网络层错误（Failed to fetch 等）对用户不可读，换成中文提示
