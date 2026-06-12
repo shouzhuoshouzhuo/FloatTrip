@@ -4,7 +4,7 @@
 
 // 与后端 helpers.haversine_km 同公式；仅用于编辑态即时显示，落库以服务端重算为准
 function haversineKm(a, b) {
-  const R = 6371.0;
+  const R = 6371.0088;
   const rad = (x) => (x * Math.PI) / 180;
   const dlat = rad(b.lat - a.lat), dlon = rad(b.lng - a.lng);
   const h = Math.sin(dlat / 2) ** 2 +
@@ -25,6 +25,7 @@ function recalcDayDists(timeline) {
 
 // 拖拽换序：时间段留在位置上不跟卡走——
 // 先记录原顺序中各景点的时段，移动后按新顺序把时段逐个套回景点
+// 调用后须紧接 recalcDayDists(newTimeline) 更新相邻距离
 function reorderKeepTimes(timeline, from, to) {
   const slots = timeline
     .filter(it => it.type === "attraction")
@@ -158,7 +159,8 @@ function EditableTimeline({ rawTimeline, ver, onReorder, onReplace, onDelete, on
       },
     });
     return () => s.destroy();
-  }, [ver]); // eslint-disable-line
+  // onReorder 不进依赖：每次变更后 ver 立即 +1 重建 Sortable，闭包不会失效
+  }, [ver]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="edit-timeline">
