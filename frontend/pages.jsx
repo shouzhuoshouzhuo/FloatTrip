@@ -303,6 +303,13 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     setOptimizedDays({});
     setOptimizingDay(null);
     setDayMsg(null);
+    // 切换行程时清除编辑态，防止残留
+    setEditing(false);
+    setDraft(null);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSaveErr("");
+    setSearchTarget(null);
   }, [planProp, planIdProp]);
 
   const applyDayTimeline = (dayI, timeline) => {
@@ -346,20 +353,155 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     } catch (e) { alert(e.message || "回退失败"); }
   };
 
+  // ── 手动编辑态 ──
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(null);          // _raw.days 的深拷贝
+  const [undoStack, setUndoStack] = React.useState([]);    // 元素 = draft 快照
+  const [redoStack, setRedoStack] = React.useState([]);
+  const [editVer, setEditVer] = React.useState(0);         // 每次变更 +1，驱动 Sortable 重挂载
+  const [saving, setSaving] = React.useState(false);
+  const [saveErr, setSaveErr] = React.useState("");
+  // 搜索弹层目标：{ dayI, idx } 替换；{ dayI, idx:null, addType } 新增
+  const [searchTarget, setSearchTarget] = React.useState(null);
+
+  const dirty = undoStack.length > 0;
+
+  // 编辑中刷新/关页守卫
+  React.useEffect(() => {
+    if (!editing || !dirty) return;
+    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [editing, dirty]);
+
+  const enterEdit = () => {
+    setDraft(structuredClone(plan._raw.days));
+    setUndoStack([]); setRedoStack([]); setSaveErr("");
+    setEditing(true); setEditVer(v => v + 1);
+  };
+
+  const exitEdit = () => {
+    if (dirty && !confirm("放弃未保存的修改？")) return;
+    setEditing(false); setDraft(null); setSaveErr("");
+  };
+
+  // 所有编辑操作的唯一入口：拷贝 → 变更 → 重算距离 → 压撤销栈
+  const applyEdit = (mutate) => {
+    setUndoStack(s => [...s, draft]);
+    setRedoStack([]);
+    const next = structuredClone(draft);
+    mutate(next);
+    next.forEach(d => recalcDayDists(d.timeline));
+    setDraft(next); setEditVer(v => v + 1);
+  };
+
+  const undo = () => {
+    if (!undoStack.length) return;
+    setRedoStack(r => [...r, draft]);
+    setDraft(undoStack[undoStack.length - 1]);
+    setUndoStack(s => s.slice(0, -1));
+    setEditVer(v => v + 1);
+  };
+
+  const redo = () => {
+    if (!redoStack.length) return;
+    setUndoStack(s => [...s, draft]);
+    setDraft(redoStack[redoStack.length - 1]);
+    setRedoStack(r => r.slice(0, -1));
+    setEditVer(v => v + 1);
+  };
+
+  const saveEdit = async () => {
+    setSaving(true); setSaveErr("");
+    try {
+      const days = draft.map((d, i) => ({ day: d.day ?? i + 1, timeline: d.timeline }));
+      const res = await saveTimeline(planId, days);
+      const adapted = adaptPlan(res.plan, currentUsername);
+      adapted.logs = plan.logs;
+      setPlan(adapted);
+      setEditing(false); setDraft(null);
+      setOptimizedDays({});   // 手动编辑后旧的"优化前快照"失效
+    } catch (e) {
+      setSaveErr(e.message || "保存失败，请重试");
+    } finally { setSaving(false); }
+  };
+
+  // ── 各编辑操作 ──
+  const handleReorder = (from, to) =>
+    applyEdit(d => { d[dayIdx].timeline = reorderKeepTimes(d[dayIdx].timeline, from, to); });
+
+  const handleDelete = (idx) =>
+    applyEdit(d => { d[dayIdx].timeline.splice(idx, 1); });
+
+  const handleTimeChange = (idx, st, et) =>
+    applyEdit(d => { Object.assign(d[dayIdx].timeline[idx], { start_time: st, end_time: et }); });
+
+  const handlePoiPick = (poi) => {
+    const { idx, addType } = searchTarget;
+    setSearchTarget(null);
+    applyEdit(d => {
+      const tl = d[dayIdx].timeline;
+      if (idx != null) {
+        const old = tl[idx];
+        if (old.type === "attraction") {
+          // 继承时间段与时段，其余字段来自新 POI；旧贴士不再适用
+          tl[idx] = { ...old, name: poi.name, rating: poi.rating ?? null,
+            open_time: poi.open_time ?? null, location: poi.location,
+            photo: poi.photo ?? null, tip: null };
+        } else {
+          tl[idx] = { type: old.type, name: poi.name, rating: poi.rating ?? null,
+            cost: poi.cost ?? null, address: poi.address ?? null,
+            location: poi.location, photo: poi.photo ?? null,
+            reason: null, no_restaurant: false };
+        }
+      } else if (addType === "attraction") {
+        tl.push({ type: "attraction", name: poi.name, rating: poi.rating ?? null,
+          open_time: poi.open_time ?? null, location: poi.location,
+          photo: poi.photo ?? null, tip: null,
+          start_time: null, end_time: null, period: "afternoon" });
+      } else {
+        tl.push({ type: addType, name: poi.name, rating: poi.rating ?? null,
+          cost: poi.cost ?? null, address: poi.address ?? null,
+          location: poi.location, photo: poi.photo ?? null,
+          reason: null, no_restaurant: false });
+      }
+    });
+  };
+
+  // 编辑态视图：draft 经 adaptPlan 渲染（地图点位/items 跟随编辑实时刷新）
+  const editedView = React.useMemo(() => {
+    if (!editing || !draft) return null;
+    const adapted = adaptPlan({ ...plan._raw, days: draft }, currentUsername);
+    adapted.logs = plan.logs;
+    return adapted;
+  }, [editing, editVer]); // eslint-disable-line
+
   const startModify = () => {
+    if (editing && !confirm("正在手动编辑，离开将丢弃未保存的修改。继续？")) return;
     if (!getAuth()) { onRequestLogin?.(); return; }
     if (!modQuery.trim() || !planId) return;
     onRequestModify?.(modQuery, planId);
   };
 
   if (!plan) return null;
-  const day = plan.days[dayIdx];
+  const viewPlan = editing && editedView ? editedView : plan;
+  const day = viewPlan.days[dayIdx];
   const dayNo = dayIdx + 1;
   const hasAttractions = (day.items || []).filter(it => it.type === "attraction").length >= 2;
   const isOptimized = optimizedDays[dayIdx] !== undefined;
 
   return (
     <div className="page page-fade">
+      {searchTarget && (
+        <PoiSearchModal
+          city={plan.destination}
+          kind={searchTarget.idx != null
+            ? (draft[searchTarget.dayI].timeline[searchTarget.idx].type === "attraction" ? "attraction" : "restaurant")
+            : (searchTarget.addType === "attraction" ? "attraction" : "restaurant")}
+          title={searchTarget.idx != null ? "更换为…" : "添加…"}
+          onPick={handlePoiPick}
+          onClose={() => setSearchTarget(null)} />
+      )}
       <div className="result-grid">
         <div>
           <div className="plan-cover">
@@ -406,7 +548,10 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
           <div className="day-header">
             <div className="day-theme">{day.theme}</div>
             {dayMsg && dayMsg.day === dayNo && <span className="day-opt-msg">{dayMsg.text}</span>}
-            {hasAttractions && planId && (
+            {!editing && planId && (
+              <button className="optimize-btn" onClick={enterEdit}>✏️ 编辑行程</button>
+            )}
+            {!editing && hasAttractions && planId && (
               isOptimized ? (
                 <button className="revert-btn" onClick={() => handleRevert(dayNo)}>↩ 回退</button>
               ) : (
@@ -417,7 +562,21 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
             )}
           </div>
 
-          <Timeline items={day.items} key={dayIdx} />
+          {editing ? (
+            <>
+              <EditToolbar canUndo={undoStack.length > 0} canRedo={redoStack.length > 0}
+                saving={saving} saveErr={saveErr}
+                onUndo={undo} onRedo={redo} onCancel={exitEdit} onSave={saveEdit} />
+              <EditableTimeline rawTimeline={draft[dayIdx].timeline} ver={`${dayIdx}-${editVer}`}
+                onReorder={handleReorder}
+                onReplace={(idx) => setSearchTarget({ dayI: dayIdx, idx })}
+                onDelete={handleDelete}
+                onTimeChange={handleTimeChange}
+                onAdd={(addType) => setSearchTarget({ dayI: dayIdx, idx: null, addType })} />
+            </>
+          ) : (
+            <Timeline items={day.items} key={dayIdx} />
+          )}
 
           <div className="tip-card">
             <Mascot size={72} pose="point" />
@@ -444,22 +603,24 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
         </div>
       </div>
 
-      <div className="query-card" style={{ margin: "30px auto 0", maxWidth: 760 }}>
-        <div className="query-label">
-          <span className="mode-dot" style={{ background: "var(--second)" }}></span>
-          对行程有意见？直接说，我来改
+      {!editing && (
+        <div className="query-card" style={{ margin: "30px auto 0", maxWidth: 760 }}>
+          <div className="query-label">
+            <span className="mode-dot" style={{ background: "var(--second)" }}></span>
+            对行程有意见？直接说，我来改
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+            <textarea className="query-textarea" rows="1" style={{ minHeight: 30 }}
+              placeholder="例如：第 2 天把玄武湖换成颐和路，景点别太多"
+              value={modQuery} onChange={(e) => setModQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) startModify(); }}
+            />
+            <button className="go-btn" onClick={startModify} disabled={!modQuery.trim()}>
+              修改规划 <span className="arrow">→</span>
+            </button>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
-          <textarea className="query-textarea" rows="1" style={{ minHeight: 30 }}
-            placeholder="例如：第 2 天把玄武湖换成颐和路，景点别太多"
-            value={modQuery} onChange={(e) => setModQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) startModify(); }}
-          />
-          <button className="go-btn" onClick={startModify} disabled={!modQuery.trim()}>
-            修改规划 <span className="arrow">→</span>
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
