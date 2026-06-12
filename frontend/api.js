@@ -321,6 +321,24 @@ async function revertDay(plan_id, day, original_timeline) {
   return r.json();
 }
 
+/* ── 手动编辑 ─────────────────────────────────────── */
+async function searchPoi(city, kw, kind) {
+  const qs = new URLSearchParams({ city, kw, kind });
+  const r = await fetch(`/api/poi/search?${qs}`, { headers: authHeaders() });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "搜索失败"); }
+  return (await r.json()).results || [];
+}
+
+async function saveTimeline(plan_id, days) {
+  const r = await fetch(`/api/plan/${encodeURIComponent(plan_id)}/timeline`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ days }),
+  });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "保存失败"); }
+  return r.json();
+}
+
 /* ── Plan data adapter ────────────────────────────── */
 const WEATHER_ICON_MAP = {
   "晴": "☀️", "少云": "🌤", "晴间多云": "⛅", "多云": "☁️",
@@ -523,5 +541,6 @@ Object.assign(window, {
   getProfile, saveProfile,
   getConfig, ensureAMap, initAmapForDay, destroyAmap,
   optimizeDay, revertDay,
+  searchPoi, saveTimeline,
   adaptPlan,
 });
