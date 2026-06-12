@@ -256,3 +256,14 @@ class TestSaveTimeline:
         with get_conn() as conn:
             reloaded = load_itinerary(pid, conn)["plan"]
         assert reloaded["days"][0]["timeline"] == saved
+
+    def test_残缺location不致500(self, client):
+        uid, headers = make_auth()
+        pid = make_plan(uid)
+        r = client.put(f"/api/plan/{pid}/timeline", json={"days": [{"day": 1, "timeline": [
+            {"type": "attraction", "name": "A", "location": {"lng": 118.0}},
+            {"type": "attraction", "name": "B", "location": {"lat": 32.0, "lng": 118.8}},
+        ]}]}, headers=headers)
+        assert r.status_code == 200
+        saved = r.json()["plan"]["days"][0]["timeline"]
+        assert "dist_from_prev_km" not in saved[1]  # 前一条坐标残缺，不算距离

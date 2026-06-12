@@ -386,6 +386,15 @@ def poi_search(
 # ─── 手动编辑：保存逐天 timeline ─────────────────────────────────
 
 
+def _valid_location(loc) -> bool:
+    """location 必须是含数值 lat/lng 的 dict，残缺对象不参与距离计算。"""
+    return (
+        isinstance(loc, dict)
+        and isinstance(loc.get("lat"), (int, float))
+        and isinstance(loc.get("lng"), (int, float))
+    )
+
+
 def _recalc_dists(timeline: list[dict]) -> None:
     """服务端重算相邻条目距离，不信任前端传入的 dist_from_prev_km。"""
     for i, item in enumerate(timeline):
@@ -394,7 +403,7 @@ def _recalc_dists(timeline: list[dict]) -> None:
             continue
         prev_loc = timeline[i - 1].get("location")
         cur_loc = item.get("location")
-        if prev_loc and cur_loc:
+        if _valid_location(prev_loc) and _valid_location(cur_loc):
             item["dist_from_prev_km"] = round(haversine_km(prev_loc, cur_loc), 2)
         else:
             item.pop("dist_from_prev_km", None)
