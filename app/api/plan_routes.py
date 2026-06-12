@@ -350,6 +350,14 @@ def poi_search(
     if kind not in ("attraction", "restaurant"):
         raise HTTPException(status_code=400, detail="kind 须为 attraction 或 restaurant")
 
+    # 输入防御：清洗 city/kw 并检查长度
+    city = city.strip()
+    kw = kw.strip().replace("\n", "").replace("\r", "").replace("\x00", "")
+    if not city or not kw:
+        raise HTTPException(status_code=400, detail="city 和 kw 不能为空")
+    if len(city) > 50 or len(kw) > 100:
+        raise HTTPException(status_code=400, detail="搜索词过长")
+
     cache_key = poi_cache_key(city, f"manual:{kind}:{kw}")
     cached = get_cached(cache_key)
     if cached is not None:
@@ -370,7 +378,6 @@ def poi_search(
             # poi_to_spot 不含地址，搜索结果需要地址帮用户分辨同名地点
             parsed["address"] = normalize_address(poi.get("address"))
         results.append(parsed)
-    results = results[:8]
 
     set_cached(cache_key, results, POI_TTL)
     return {"results": results}

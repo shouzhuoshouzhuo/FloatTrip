@@ -139,3 +139,22 @@ class TestPoiSearch:
         _, headers = make_auth()
         r = client.get("/api/poi/search", params={"city": "南京", "kw": "x"}, headers=headers)
         assert r.status_code == 502
+
+    def test_缓存命中直接返回不调搜索(self, client, monkeypatch):
+        import app.api.plan_routes as plan_routes
+
+        called = []
+        monkeypatch.setattr(plan_routes, "get_cached", lambda key: [{"name": "缓存景点"}])
+        monkeypatch.setattr(plan_routes, "search_city_pois",
+                            lambda *a, **k: called.append(1))
+
+        _, headers = make_auth()
+        r = client.get("/api/poi/search", params={"city": "南京", "kw": "x"}, headers=headers)
+        assert r.status_code == 200
+        assert r.json()["results"] == [{"name": "缓存景点"}]
+        assert not called
+
+    def test_超长kw返回400(self, client):
+        _, headers = make_auth()
+        r = client.get("/api/poi/search", params={"city": "南京", "kw": "x" * 101}, headers=headers)
+        assert r.status_code == 400
