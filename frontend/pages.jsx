@@ -305,7 +305,7 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     setDayMsg(null);
     // 切换行程时清除编辑态，防止残留
     setEditing(false);
-    setDraft(null);
+    setDraft(null); draftRef.current = null;
     setUndoStack([]);
     setRedoStack([]);
     setSaveErr("");
@@ -356,6 +356,8 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
   // ── 手动编辑态 ──
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(null);          // _raw.days 的深拷贝
+  const draftRef = React.useRef(null);
+  React.useEffect(() => { draftRef.current = draft; }, [draft]);
   const [undoStack, setUndoStack] = React.useState([]);    // 元素 = draft 快照
   const [redoStack, setRedoStack] = React.useState([]);
   const [editVer, setEditVer] = React.useState(0);         // 每次变更 +1，驱动 Sortable 重挂载
@@ -365,61 +367,74 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
   const [searchTarget, setSearchTarget] = React.useState(null);
 
   const dirty = undoStack.length > 0;
+  const dirtyRef = React.useRef(false);
+  React.useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
 
-  // 编辑中刷新/关页守卫
+  // 编辑中刷新/关页守卫（dirtyRef 避免 beforeunload 闭包捕获过期 dirty 值）
   React.useEffect(() => {
-    if (!editing || !dirty) return;
-    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ""; };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [editing, dirty]);
+    if (!editing) return;
+    const guard = (e) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [editing]);
 
   const enterEdit = () => {
-    setDraft(structuredClone(plan._raw.days));
+    const clone = structuredClone(plan._raw.days);
+    setDraft(clone); draftRef.current = clone;
     setUndoStack([]); setRedoStack([]); setSaveErr("");
     setEditing(true); setEditVer(v => v + 1);
   };
 
   const exitEdit = () => {
     if (dirty && !confirm("放弃未保存的修改？")) return;
-    setEditing(false); setDraft(null); setSaveErr("");
+    setEditing(false); setDraft(null); draftRef.current = null; setSaveErr("");
   };
 
   // 所有编辑操作的唯一入口：拷贝 → 变更 → 重算距离 → 压撤销栈
+  // 经 draftRef 读最新值，同一 tick 多次调用也不会丢快照
   const applyEdit = (mutate) => {
-    setUndoStack(s => [...s, draft]);
+    const cur = draftRef.current;
+    setUndoStack(s => [...s, cur]);
     setRedoStack([]);
-    const next = structuredClone(draft);
+    const next = structuredClone(cur);
     mutate(next);
     next.forEach(d => recalcDayDists(d.timeline));
-    setDraft(next); setEditVer(v => v + 1);
+    setDraft(next);
+    draftRef.current = next;
+    setEditVer(v => v + 1);
   };
 
   const undo = () => {
     if (!undoStack.length) return;
-    setRedoStack(r => [...r, draft]);
-    setDraft(undoStack[undoStack.length - 1]);
+    const cur = draftRef.current;
+    const prev = undoStack[undoStack.length - 1];
+    setRedoStack(r => [...r, cur]);
     setUndoStack(s => s.slice(0, -1));
+    setDraft(prev);
+    draftRef.current = prev;
     setEditVer(v => v + 1);
   };
 
   const redo = () => {
     if (!redoStack.length) return;
-    setUndoStack(s => [...s, draft]);
-    setDraft(redoStack[redoStack.length - 1]);
+    const cur = draftRef.current;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack(s => [...s, cur]);
     setRedoStack(r => r.slice(0, -1));
+    setDraft(next);
+    draftRef.current = next;
     setEditVer(v => v + 1);
   };
 
   const saveEdit = async () => {
     setSaving(true); setSaveErr("");
     try {
-      const days = draft.map((d, i) => ({ day: d.day ?? i + 1, timeline: d.timeline }));
+      const days = draftRef.current.map((d, i) => ({ day: d.day ?? i + 1, timeline: d.timeline }));
       const res = await saveTimeline(planId, days);
       const adapted = adaptPlan(res.plan, currentUsername);
       adapted.logs = plan.logs;
       setPlan(adapted);
-      setEditing(false); setDraft(null);
+      setEditing(false); setDraft(null); draftRef.current = null;
       setOptimizedDays({});   // 手动编辑后旧的"优化前快照"失效
     } catch (e) {
       setSaveErr(e.message || "保存失败，请重试");
@@ -437,10 +452,10 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     applyEdit(d => { Object.assign(d[dayIdx].timeline[idx], { start_time: st, end_time: et }); });
 
   const handlePoiPick = (poi) => {
-    const { idx, addType } = searchTarget;
+    const { dayI, idx, addType } = searchTarget;
     setSearchTarget(null);
     applyEdit(d => {
-      const tl = d[dayIdx].timeline;
+      const tl = d[dayI].timeline;
       if (idx != null) {
         const old = tl[idx];
         if (old.type === "attraction") {
@@ -474,10 +489,13 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     const adapted = adaptPlan({ ...plan._raw, days: draft }, currentUsername);
     adapted.logs = plan.logs;
     return adapted;
-  }, [editing, editVer]); // eslint-disable-line
+  }, [editing, editVer]); // editVer 是版本令牌：draft 每次变更都 +1，故意省略 draft/plan 直接依赖
 
   const startModify = () => {
-    if (editing && !confirm("正在手动编辑，离开将丢弃未保存的修改。继续？")) return;
+    if (editing) {
+      if (!confirm("正在手动编辑，离开将丢弃未保存的修改。继续？")) return;
+      setEditing(false); setDraft(null); draftRef.current = null; setSaveErr("");
+    }
     if (!getAuth()) { onRequestLogin?.(); return; }
     if (!modQuery.trim() || !planId) return;
     onRequestModify?.(modQuery, planId);
