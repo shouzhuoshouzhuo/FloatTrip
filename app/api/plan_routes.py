@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import decode_token
+from app.core.cache import POI_TTL, get_cached, poi_cache_key, set_cached
 from app.core.database import get_conn
 from app.core.memory import (
     delete_pending_modification,
@@ -19,7 +20,13 @@ from app.core.memory import (
     update_plan_json,
 )
 from app.planning.graph import run_confirm_stream
-from app.planning.helpers import haversine_km
+from app.planning.helpers import amap_key, haversine_km, restaurant_to_dict
+from app.providers.amap.poi import (
+    ATTRACTION_TYPE,
+    normalize_address,
+    poi_to_spot,
+    search_city_pois,
+)
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -323,3 +330,47 @@ async def confirm_modification(req: ConfirmModificationRequest, request: Request
             "Connection": "keep-alive",
         },
     )
+
+
+# ─── 手动编辑：POI 搜索代理 ──────────────────────────────────
+
+
+@router.get("/api/poi/search")
+def poi_search(
+    city: str,
+    kw: str,
+    kind: str = "attraction",
+    authorization: str | None = Header(default=None),
+):
+    """手动换点/加点的搜索代理：高德 Key 不出服务端，结果走 Redis 缓存。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="需要登录")
+    if not decode_token(authorization[7:]):
+        raise HTTPException(status_code=401, detail="token 无效或已过期")
+    if kind not in ("attraction", "restaurant"):
+        raise HTTPException(status_code=400, detail="kind 须为 attraction 或 restaurant")
+
+    cache_key = poi_cache_key(city, f"manual:{kind}:{kw}")
+    cached = get_cached(cache_key)
+    if cached is not None:
+        return {"results": cached}
+
+    types = ATTRACTION_TYPE if kind == "attraction" else "餐饮服务"
+    try:
+        raw = search_city_pois(city, amap_key(), keywords=kw, types=types, offset=8)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    results: list[dict] = []
+    for poi in raw:
+        parsed = poi_to_spot(poi) if kind == "attraction" else restaurant_to_dict(poi)
+        if not parsed:
+            continue
+        if kind == "attraction":
+            # poi_to_spot 不含地址，搜索结果需要地址帮用户分辨同名地点
+            parsed["address"] = normalize_address(poi.get("address"))
+        results.append(parsed)
+    results = results[:8]
+
+    set_cached(cache_key, results, POI_TTL)
+    return {"results": results}
