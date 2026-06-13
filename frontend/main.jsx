@@ -59,6 +59,9 @@ function App() {
     checkAuth().then(result => {
       if (!result) setAuthUser(null);
     });
+    const onExpired = () => setAuthUser(null);
+    window.addEventListener("auth:expired", onExpired);
+    return () => window.removeEventListener("auth:expired", onExpired);
   }, []);
 
   React.useEffect(() => {
@@ -223,6 +226,7 @@ function App() {
           onPlanReady={onPlanReady}
           modifyTrigger={modifyTrigger}
           onCancelModify={onCancelModify}
+          onManageProfile={() => { if (!authUser) { requestLogin("请先登录管理旅行画像"); return; } go("profile"); }}
         />
       </div>
       {page === "detail" && detailPlan && (

@@ -21,3 +21,16 @@ qr_eval_report.md
 .gstack/
 .superpowers/
 .claude/
+.agents/
+travel_plans.db
+itineraries.db
+.gitignore
+awesomefrontend/途见·新建行程页（离线版）.html
+awesomefrontend/sky-bg.png
+data/app.db
+demos/demo-home.html
+demos/demo-loading.html
+demos/demo-result.html
+demos/itinerary-redesign-mock.html
+docs/superpowers/plans/2026-06-13-trip-detail-enhancements.md
+docs/superpowers/specs/2026-06-11-sweep-preview-design.md

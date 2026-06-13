@@ -82,7 +82,7 @@ function ConcernModal({ concern, onKeep, onConfirm }) {
 }
 
 /* ── 主页（新建规划） ─────────────────────────── */
-function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady, modifyTrigger, onCancelModify }) {
+function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady, modifyTrigger, onCancelModify, onManageProfile }) {
   const [phase, setPhase] = React.useState("idle");
 
   React.useEffect(() => { onPhaseChange?.(phase); }, [phase]); // eslint-disable-line
@@ -97,11 +97,19 @@ function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady,
   const [concernModal, setConcernModal] = React.useState(null);
   const [pendingModState, setPendingModState] = React.useState(null);
   const [errMsg, setErrMsg] = React.useState("");
+  const [profile, setProfile] = React.useState(null);
   const abortRef = React.useRef(null);
   // 旅程已走到的最远站点下标：planner⇄reviewer / planner⇄time_check 循环时只前进不后退
   const maxStepRef = React.useRef(-1);
 
   React.useEffect(() => () => abortRef.current && abortRef.current(), []);
+
+  // 拉取用户画像，在新建规划页展示，引导用户参考自身偏好斟酌措辞
+  // 依赖 currentUsername：用户登录后立即刷新展示，登出则清空（无需重新进入本页）
+  React.useEffect(() => {
+    if (!getAuth()) { setProfile(null); return; }
+    getProfile().then(setProfile).catch(() => {});
+  }, [currentUsername]);
 
   // 由 App 传入修改触发器，在挂载时（planKey bump 后）立即执行修改流
   React.useEffect(() => {
@@ -130,7 +138,17 @@ function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady,
 
   const doStream = (body) => {
     setPhase("loading");
-    resetJourney();
+    const isModify = !!(body.plan_id && body.modification_notes);
+    if (isModify) {
+      const preDone = JOURNEY_STEPS.slice(0, 3).map(s => s.key);
+      maxStepRef.current = 3;
+      setDoneNodes(preDone);
+      setActiveNode("plan_review");
+      setStageLabel("");
+      setLogs([]);
+    } else {
+      resetJourney();
+    }
     setErrMsg("");
 
     streamPlan(body, {
@@ -191,10 +209,17 @@ function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady,
   };
 
   const examples = [
-    "南京 06.10–06.12 三天，喜欢历史古迹和本地小吃，慢节奏",
+    "北京明天三日游，想玩颐和园、故宫，不喜欢走太多路",
     "成都周末两天，想泡茶馆吃火锅",
     "杭州一日，西湖边慢慢走",
   ];
+
+  // 画像偏好行（仅渲染非空字段；全空则整卡隐藏）
+  const profileRows = profile ? [
+    { key: "attr", label: "景点", cls: "attr", items: profile.attraction_prefs || [] },
+    { key: "food", label: "餐饮", cls: "food", items: profile.food_prefs || [] },
+    { key: "habit", label: "习惯", cls: "habit", items: profile.habit_prefs || [] },
+  ].filter(r => r.items.length) : [];
 
   // ── 加载中 ──
   if (phase === "loading") {
@@ -242,11 +267,32 @@ function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady,
           <p className="hero-lede">
             告诉我想去哪里、哪几天、喜欢什么——多位 AI Agent 会查景点、订路线、看天气、找馆子，几分钟内排出一份像杂志一样好读的行程。
           </p>
+          {profileRows.length > 0 && (
+            <div className="profile-hint">
+              <div className="ph-head">
+                <span className="ph-title">途途记得的你</span>
+                <button className="ph-manage" onClick={onManageProfile}>管理画像</button>
+              </div>
+              <p className="ph-desc">这些是从你过往行程沉淀的偏好。规划时可对照它斟酌措辞——说得越贴合，行程越懂你。</p>
+              <div className="ph-rows">
+                {profileRows.map(r => (
+                  <div key={r.key} className="ph-row">
+                    <span className="ph-label">{r.label}</span>
+                    <div className="ph-chips">
+                      {r.items.map((it, i) => (
+                        <span key={i} className={`ph-chip ${r.cls}`}>{it}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="query-card">
             <div className="query-label"><span className="mode-dot"></span>描述你的旅行需求（含目的地、日期、偏好）</div>
             <textarea
               className="query-textarea"
-              placeholder="例如：南京 2026-06-10 到 2026-06-12 三天，喜欢历史古迹，想吃本地小吃，慢节奏"
+              placeholder="例如：北京明天三日游，想玩颐和园、故宫，不喜欢走太多路"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) startPlan(); }}
@@ -345,12 +391,14 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
       const dayI = dayNo - 1;
       const rawTimeline = plan._raw?.days?.[dayI]?.timeline;
       const res = await optimizeDay(planId, dayNo);
-      if (res.improved && res.optimized_day) {
-        setOptimizedDays(prev => ({ ...prev, [dayI]: rawTimeline }));
+      if (res.optimized_day) {
+        if (res.improved) {
+          setOptimizedDays(prev => ({ ...prev, [dayI]: rawTimeline }));
+          showDayMsg(dayNo, `已优化：${res.original_km}km → ${res.optimized_km}km`);
+        } else {
+          showDayMsg(dayNo, "当前顺序已是最短路线");
+        }
         applyDayTimeline(dayI, res.optimized_day.timeline);
-        showDayMsg(dayNo, `已优化：${res.original_km}km → ${res.optimized_km}km`);
-      } else {
-        showDayMsg(dayNo, "当前顺序已是最短路线");
       }
     } catch (e) { alert(e.message || "优化失败"); }
     finally { setOptimizingDay(null); }
@@ -557,8 +605,38 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
   const hasAttractions = (day.items || []).filter(it => it.type === "attraction").length >= 2;
   const isOptimized = optimizedDays[dayIdx] !== undefined;
 
+  const handlePickMeal = async (poi, mealType) => {
+    if (!planId) return;
+    setNearbyTarget(null);
+    const rawTimeline = plan._raw.days[dayIdx]?.timeline || [];
+    const mealEntry = {
+      type: mealType,
+      name: poi.name,
+      rating: poi.rating ?? null,
+      cost: poi.cost ?? null,
+      address: poi.address ?? null,
+      location: poi.location ?? null,
+      photo: poi.photo ?? null,
+      open_time: poi.open_time ?? null,
+      tel: poi.tel ?? null,
+      reason: null,
+      no_restaurant: false,
+    };
+    const hasSlot = rawTimeline.some(it => it.type === mealType);
+    const newTimeline = hasSlot
+      ? rawTimeline.map(item => item.type !== mealType ? item : mealEntry)
+      : [...rawTimeline, mealEntry];
+    try {
+      await saveTimeline(planId, [{ day: dayIdx + 1, timeline: newTimeline }]);
+      applyDayTimeline(dayIdx, newTimeline);
+      showDayMsg(dayNo, `已更新${mealType === "lunch" ? "午餐" : "晚餐"}：${poi.name}`);
+    } catch (e) {
+      alert(e.message || "更新失败");
+    }
+  };
+
   return (
-    <div className="page page-fade trip-detail-page">
+    <React.Fragment>
       {searchTarget && (
         <PoiSearchModal
           city={plan.destination}
@@ -573,8 +651,10 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
         <NearbySearchModal
           location={nearbyTarget.location}
           name={nearbyTarget.name}
-          onClose={() => setNearbyTarget(null)} />
+          onClose={() => setNearbyTarget(null)}
+          onPickMeal={handlePickMeal} />
       )}
+    <div className="page page-fade trip-detail-page">
       <div className="result-grid">
         <div>
           <div className="plan-cover">
@@ -748,6 +828,7 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
         </div>
       )}
     </div>
+  </React.Fragment>
   );
 }
 

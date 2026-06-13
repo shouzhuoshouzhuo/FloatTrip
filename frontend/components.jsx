@@ -285,7 +285,7 @@ function AttractionCard({ item, onNearby }) {
             {item.start && <span>{item.start}{item.end ? ` – ${item.end}` : ""}</span>}
             {item.rating != null && <span className="star">★ {Number(item.rating).toFixed(1)}</span>}
             {item.cost && <span>💰 ¥{item.cost}/人</span>}
-            {item.open && <span>开放 {item.open}</span>}
+            {item.open && <span className="t-open">开放 {item.open}</span>}
           </div>
           {item.address && <div className="t-address">📍 {item.address}</div>}
           {item.tel && <div className="t-address">📞 {item.tel}</div>}
@@ -468,7 +468,7 @@ function RecommendStrip({ candidates, editing }) {
 }
 
 /* ── 周边搜索弹层 ────────────────────────────────── */
-function NearbySearchModal({ location, name, onClose }) {
+function NearbySearchModal({ location, name, onClose, onPickMeal }) {
   const [tab, setTab] = React.useState("attraction");
   const [radius, setRadius] = React.useState(1500);
   const [results, setResults] = React.useState(null);
@@ -515,6 +515,12 @@ function NearbySearchModal({ location, name, onClose }) {
                 {p.distance != null && <span> · {p.distance}m</span>}
                 {p.address && <span> · {p.address}</span>}
               </div>
+              {tab === "restaurant" && onPickMeal && (
+                <div className="nearby-meal-actions">
+                  <button className="nearby-meal-btn" onClick={() => onPickMeal(p, "lunch")}>设为午餐</button>
+                  <button className="nearby-meal-btn" onClick={() => onPickMeal(p, "dinner")}>设为晚餐</button>
+                </div>
+              )}
             </div>
           ))}
         </div>

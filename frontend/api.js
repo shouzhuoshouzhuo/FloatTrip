@@ -9,6 +9,7 @@ function setAuth(token, username) {
 }
 function clearAuth() {
   localStorage.removeItem("auth");
+  window.dispatchEvent(new CustomEvent("auth:expired"));
 }
 function authHeaders() {
   const a = getAuth();
@@ -49,13 +50,13 @@ async function checkAuth() {
 }
 
 /* ── Planning SSE ─────────────────────────────────── */
-async function streamPlan(body, callbacks) {
+async function streamPlan(body, callbacks, url = "/api/plan/stream") {
   const { onStage, onResult, onMissingFields, onWarning, onError, onAbort } = callbacks;
   const ctrl = new AbortController();
   if (onAbort) onAbort(() => ctrl.abort());
 
   try {
-    const r = await fetch("/api/plan/stream", {
+    const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
@@ -63,7 +64,9 @@ async function streamPlan(body, callbacks) {
     });
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
-      onError && onError(d.detail || "请求失败");
+      const detail = d.detail;
+      const msg = typeof detail === "string" ? detail : (Array.isArray(detail) ? detail.map(e => e.msg).join("; ") : "请求失败");
+      onError && onError(msg);
       return;
     }
 
@@ -104,7 +107,11 @@ async function streamPlan(body, callbacks) {
 }
 
 async function confirmModification(pending_id, parent_plan_id, callbacks) {
-  return streamPlan({ pending_id, parent_plan_id, _confirm: true }, callbacks);
+  return streamPlan(
+    { pending_id, parent_plan_id },
+    callbacks,
+    "/api/plan/confirm_modification"
+  );
 }
 
 /* ── History ──────────────────────────────────────── */
@@ -493,7 +500,11 @@ function adaptPlan(backendPlan, username) {
   const dest = backendPlan.destination || "旅行";
   const prefs = backendPlan.preferences || {};
   // preferences 字段可能是字符串（"历史、古迹"）或数组，统一转数组
-  const toArr = (v) => !v ? [] : Array.isArray(v) ? v : String(v).split(/[，、,]+/).map(s => s.trim()).filter(Boolean);
+  // 同时过滤掉 LLM 偶尔吐出的占位垃圾值（"null"/"无" 等），避免污染标题与 badge
+  const JUNK_PREF = new Set(["null", "undefined", "none", "无", "暂无", "没有", "不限"]);
+  const toArr = (v) => !v ? [] : (Array.isArray(v) ? v : String(v).split(/[，、,]+/))
+    .map(s => String(s).trim())
+    .filter(s => s && !JUNK_PREF.has(s.toLowerCase()));
   const badges = [
     ...toArr(prefs.attraction).slice(0, 2),
     ...toArr(prefs.food).slice(0, 1),
@@ -521,7 +532,9 @@ function adaptPlan(backendPlan, username) {
     }
     return "";
   })();
-  const title = `${dest} · ${backendPlan.days_count || ""}日${prefs.habit?.[0] ? prefs.habit[0].slice(0, 4) : "旅行"}`;
+  const title = backendPlan.days_count
+    ? `${dest} · ${backendPlan.days_count}日游`
+    : `${dest} · 行程`;
 
   // 各天
   const weekdays = ["日", "一", "二", "三", "四", "五", "六"];

@@ -57,6 +57,90 @@ def haversine_km(a: dict[str, float], b: dict[str, float]) -> float:
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(h))
 
 
+def _has_coords(loc: Any) -> bool:
+    """location 是否为含数值经纬度的 dict。"""
+    return (
+        isinstance(loc, dict)
+        and isinstance(loc.get("lat"), (int, float))
+        and isinstance(loc.get("lng"), (int, float))
+    )
+
+
+def cluster_pois_by_location(
+    pois: list[dict[str, Any]], k: int
+) -> dict[str, int]:
+    """按经纬度把候选景点聚成 k 个地理分区，返回 {景点名: 分区编号(0-based)}。
+
+    用于给 Planner 提供「真实坐标距离」的地理分区软提示，替代坐标盲的行政区名
+    （adname）——同一行政区的景点可能相距很远（如玄武湖与中山陵同属玄武区却
+    相距约 10km）。
+
+    - 无坐标的景点归入分区 -1（不参与聚类）。
+    - k<=1 或有效景点过少时，全部归入分区 0。
+    - 确定性：固定种子初始化（按经度排序等距取点），同一输入每次结果一致。
+    """
+    result: dict[str, int] = {}
+    valid: list[tuple[str, dict[str, float]]] = []
+    for s in pois:
+        loc = s.get("location")
+        if _has_coords(loc):
+            valid.append((s["name"], loc))
+        else:
+            result[s["name"]] = -1
+
+    n = len(valid)
+    if n == 0:
+        return result
+    k = max(1, min(k, n))
+    if k == 1:
+        for name, _ in valid:
+            result[name] = 0
+        return result
+
+    # 确定性初始化：按经度（再纬度）排序后等距取 k 个种子
+    ordered = sorted(valid, key=lambda x: (x[1]["lng"], x[1]["lat"]))
+    centroids = [
+        {"lat": ordered[round(i * (n - 1) / (k - 1))][1]["lat"],
+         "lng": ordered[round(i * (n - 1) / (k - 1))][1]["lng"]}
+        for i in range(k)
+    ]
+
+    assign: dict[str, int] = {}
+    for _ in range(20):
+        new_assign = {
+            name: min(range(k), key=lambda c: haversine_km(centroids[c], loc))
+            for name, loc in valid
+        }
+        if new_assign == assign:
+            break
+        assign = new_assign
+        for c in range(k):
+            members = [loc for name, loc in valid if assign[name] == c]
+            if members:
+                centroids[c] = {
+                    "lat": sum(m["lat"] for m in members) / len(members),
+                    "lng": sum(m["lng"] for m in members) / len(members),
+                }
+
+    result.update(assign)
+    return result
+
+
+# ─── 偏好清洗 ─────────────────────────────────────────────────
+
+# LLM 在用户未提供偏好时偶尔吐出的占位垃圾值（应等同于"无偏好"）
+_JUNK_PREF = {"null", "none", "undefined", "n/a", "na", "无", "暂无", "没有", "不限", "无偏好"}
+
+
+def clean_pref(v: str | None) -> str | None:
+    """把偏好字段归一化：去空白；整串为占位垃圾值（如 'null'/'无'）时视为无偏好返回 None。
+
+    只在『整串』等于垃圾 token 时清空，避免误伤 '无辣不欢' 这类正常偏好。
+    """
+    s = (v or "").strip()
+    return None if (not s or s.lower() in _JUNK_PREF) else s
+
+
 # ─── 候选景点池 ───────────────────────────────────────────────
 
 def fetch_city_spots(city: str, api_key: str, *, max_spots: int = 30) -> list[dict[str, Any]]:
@@ -91,19 +175,50 @@ def filter_by_rating(
 
 # ─── 格式化 ──────────────────────────────────────────────────
 
-def format_spots_for_llm(pois: list[dict[str, Any]]) -> str:
-    """候选景点池的紧凑清单（喂给 LLM）。"""
-    lines = []
+_CLUSTER_LABELS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮"
+
+
+def _spot_line(s: dict[str, Any]) -> str:
+    loc = s.get("location") or {}
+    rating = f"{s['rating']:.1f}" if s.get("rating") else "无"
+    open_t = s.get("open_time") or "未知"
+    area = s.get("adname") or "未知"
+    if _has_coords(loc):
+        coord = f"坐标 {loc['lng']:.4f},{loc['lat']:.4f}"
+    else:
+        coord = "坐标未知"
+    return f"- {s['name']}（区域 {area}，评分 {rating}，开放 {open_t}，{coord}）"
+
+
+def format_spots_for_llm(
+    pois: list[dict[str, Any]],
+    cluster_map: dict[str, int] | None = None,
+) -> str:
+    """候选景点池的紧凑清单（喂给 LLM）。
+
+    传入 cluster_map（{景点名: 分区编号}，见 cluster_pois_by_location）时，按
+    『地理分区』分组展示——同一分区的景点连续列出，引导 LLM 把同区景点排在同
+    一天。不传则保持平铺（向后兼容）。
+    """
+    if not cluster_map:
+        return "\n".join(_spot_line(s) for s in pois)
+
+    groups: dict[int, list[dict[str, Any]]] = {}
     for s in pois:
-        loc = s["location"]
-        rating = f"{s['rating']:.1f}" if s.get("rating") else "无"
-        open_t = s.get("open_time") or "未知"
-        area = s.get("adname") or "未知"
-        lines.append(
-            f"- {s['name']}（区域 {area}，评分 {rating}，开放 {open_t}，"
-            f"坐标 {loc['lng']:.4f},{loc['lat']:.4f}）"
-        )
-    return "\n".join(lines)
+        cid = cluster_map.get(s["name"], -1)
+        groups.setdefault(cid, []).append(s)
+
+    blocks = []
+    # 有效分区按编号升序在前，无坐标(-1)放最后
+    for cid in sorted(groups, key=lambda c: (c == -1, c)):
+        if cid == -1:
+            header = "📍其他（无坐标，地理分区未知）"
+        else:
+            label = _CLUSTER_LABELS[cid] if cid < len(_CLUSTER_LABELS) else f"#{cid + 1}"
+            header = f"📍地理分区{label}"
+        lines = "\n".join(_spot_line(s) for s in groups[cid])
+        blocks.append(f"{header}\n{lines}")
+    return "\n\n".join(blocks)
 
 
 def spot_location_map(pois: list[dict[str, Any]]) -> dict[str, dict[str, float]]:

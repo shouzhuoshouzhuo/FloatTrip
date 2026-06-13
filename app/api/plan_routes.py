@@ -51,8 +51,9 @@ def _optimize_day_timeline(timeline: list[dict]) -> tuple[list[dict], float, flo
     """
     对单天 timeline 做路线优化：
     - 暴力枚举 daytime attractions 的全排列（evening 景点固定末位）
-    - meals 保持原始相对位置（排在第几个 daytime 景点之后）并参与路程计算
+    - 路程目标只计算景点（daytime + evening）之间的距离，meals 不参与路程评分
       → 原始排列是候选项之一，保证 best_km ≤ original_km，不会越优化越差
+    - meals 保持原始相对位置（排在第几个 daytime 景点之后），在最终 timeline 中插回
     - 重算 dist_from_prev_km
     返回 (optimized_timeline, original_km, optimized_km)
     """
@@ -109,15 +110,15 @@ def _optimize_day_timeline(timeline: list[dict]) -> tuple[list[dict], float, flo
 
         return seq
 
-    # 原始路程（含餐厅地理位置）
-    original_km = _path_km(build_sequence(daytime))
+    # 原始路程（只计算景点 daytime + evening，餐厅不参与评分）
+    original_km = _path_km(daytime + evening)
 
-    # 暴力枚举 daytime 全排列，以含餐厅的完整序列计算路程
+    # 暴力枚举 daytime 全排列，只用景点序列评估路程
     # 原始排列也在候选内，故 best_km ≤ original_km 恒成立
     best_perm = list(daytime)
     best_km   = original_km
     for perm in permutations(daytime):
-        km = _path_km(build_sequence(list(perm)))
+        km = _path_km(list(perm) + evening)
         if km < best_km - 1e-9:
             best_km = km
             best_perm = list(perm)

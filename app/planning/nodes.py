@@ -1,4 +1,4 @@
-"""LangGraph 节点函数：意图识别、景点搜索、规划、评审、餐饮搜索、推荐、finalize。"""
+"""LangGraph 节点函数：意图识别、景点搜索、规划、评审、时间检查、餐饮搜索、推荐、finalize。"""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ from app.planning.schemas import (
 )
 from app.planning.helpers import (
     amap_key,
+    clean_pref,
+    cluster_pois_by_location,
     dinner_anchor_spot,
     fetch_city_spots,
     fetch_weather_for_dates,
@@ -94,9 +96,9 @@ def make_query_rewrite_node(model_name: str | None, user_id: str | None):
             note = f"[query_rewrite] {raw!r} → {rewritten.rewritten_query!r}（{rewritten.reasoning}）"
             return {
                 "rewritten_query": rewritten.rewritten_query,
-                "attraction_preference": rewritten.attraction_preference or state.attraction_preference,
-                "food_preference":       rewritten.food_preference       or state.food_preference,
-                "habit_preference":      rewritten.habit_preference      or state.habit_preference,
+                "attraction_preference": clean_pref(rewritten.attraction_preference) or state.attraction_preference,
+                "food_preference":       clean_pref(rewritten.food_preference)       or state.food_preference,
+                "habit_preference":      clean_pref(rewritten.habit_preference)      or state.habit_preference,
                 "history": state.history + [note],
             }
         except Exception as exc:
@@ -154,8 +156,8 @@ def make_intent_node(model_name: str | None, profile_hint: str = ""):
         if not missing and destination and start and end:
             forecast, w_note = fetch_weather_for_dates(destination, start, end, amap_key())
 
-        def opt(v: str) -> str | None:
-            return v.strip() or None
+        # 偏好归一化：去空白，并把 LLM 偶吐的 'null'/'无' 等占位垃圾值视为无偏好
+        opt = clean_pref
 
         weather_log = f"，天气预报={len(forecast)}天" if forecast else ("，天气获取失败/超出范围" if not missing else "")
         note = (
@@ -224,7 +226,8 @@ def make_planner_node(model_name: str | None):
         is_final = (state.review_round >= state.max_review_rounds
                     and bool(state.route_modify_opinion))
 
-        cand_text = format_spots_for_llm(state.pois)
+        cluster_map = cluster_pois_by_location(state.pois, state.days)
+        cand_text = format_spots_for_llm(state.pois, cluster_map)
         feedback = ""
         if state.route_modify_opinion:
             is_user_opinion = "【用户修改意见】" in state.route_modify_opinion
@@ -368,7 +371,7 @@ def make_reviewer_node(model_name: str | None):
             f"用户游玩习惯：{state.habit_preference or '无'}"
             f"{_travel_dates_block(state)}\n"
             f"{weather_block}\n"
-            f"候选景点池：\n{format_spots_for_llm(state.pois)}\n\n"
+            f"候选景点池：\n{format_spots_for_llm(state.pois, cluster_pois_by_location(state.pois, state.days))}\n\n"
             f"待评审路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
             f"系统客观预检（请据此判断）：\n{facts}"
             f"{dialogue_block}\n\n"
