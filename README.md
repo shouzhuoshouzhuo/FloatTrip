@@ -39,7 +39,7 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 > 新建规划页
 
 <p align="center">
-  <img src="./static/images/规划页.png alt="规划页" width="900" />
+  <img src="./static/images/规划页.png" alt="规划页" width="900" />
 </p>
 
 > 规划进度页
