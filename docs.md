@@ -20,11 +20,13 @@ Spot diff 检测：Planner 节点拿到新 route 后，与上一轮做景点集�
 改动位置：
 
 # graph.py
+
 from langgraph.checkpoint.memory import MemorySaver
 checkpointer = MemorySaver()
 return g.compile(checkpointer=checkpointer)
 
 # main.py - 请求带 thread_id
+
 config = {"configurable": {"thread_id": request.thread_id}, ...}
 result = app.invoke(init, config=config)
 效果：missing_fields 触发时 graph 暂停在 intent 节点之后，第二次请求带同一 thread_id 续跑，attraction_search 只跑一次。这是 LangGraph 的招牌能力，改动只涉及 graph.py 和 main.py 两个文件的十几行。
@@ -37,6 +39,7 @@ result = app.invoke(init, config=config)
 根因：日期信息断在了 intent 节点。intent 算出了 `travel_start_date`（date 对象）存进 state，但下游 planner/reviewer 的 human prompt 只拼了 `state.days`（天数），没把"逐天日期+星期"展开喂给模型。而 Python 侧的客观预检 `open_time_violations` 也只用正则抠 `HH:MM-HH:MM` 时间段、**完全忽略星期/闭馆日**，所以"周一闭馆"这类违规既没进 prompt、也没被代码兜住。
 
 修复（最小、聚焦"把信息喂给 agent"）：
+
 - nodes.py 加 `_travel_dates_block(state)`：从 `travel_start_date + timedelta(i)` 逐天展开成 `Day1 = 2026-06-08（周一）…`（复用已有 `WEEKDAYS` 常量），无出发日期时返回空串降级。
 - 注入 planner 和 reviewer 两处 human prompt。
 - prompts.py 同步收紧 PLANNER #3 / REVIEWER #4：明确"对照 prompt 给出的星期，别把有闭馆日的景点排在不开放那天 / 排了要打回"（CLAUDE.md 约定：prompt 与节点代码两处同步改）。
@@ -102,6 +105,7 @@ def _lookup(name, cands_dict, cands_list):
 **同期 Bug**：`keywords="餐厅"` 只匹配名称含"餐厅"字样的 POI（如"某某餐厅"），绝大多数餐馆（小面馆、火锅店等）都不在其中，实际命中极少。应改用 `types="餐饮服务"` 做分类搜索，与名称无关，覆盖所有餐饮 POI。
 
 **沉淀**：
+
 1. **LLM 的 "严格复制" 指令在精确字符串匹配场景下不可靠**——即使明确要求，也要在代码层做宽容匹配（子串/模糊/最终降级），而不是信任 LLM 100% 遵从。
 2. **API 的 keyword 参数 vs type 参数语义不同**：keyword 匹配的是 POI 的名称/描述文本，type 匹配的是 POI 的业务分类。用错参数会静默返回极少结果而没有任何报错，排查时需手动对照 API 文档验证。
 3. **"搜索返回正常，但最终显示无数据" 类 bug 的排查路径**：先确认 API 层（有没有结果），再确认解析层（过滤后还剩多少），最后查 lookup 层（精确匹配是否 miss）。本例 API 层和解析层都正常，问题出在 lookup 层。
@@ -153,6 +157,7 @@ def _lookup(name, cands_dict, cands_list):
 **修复**：改为固定工作流：直接读 DB 拿全部三字段 → 格式化成 `profile_text` → 单次结构化 LLM 调用（改写 + 冲突解析 + 输出偏好字段）。去掉 `create_react_agent`、`build_chat_deepseek`、`search_user_profile` tool 定义，节省一次 LLM 调用。`QUERY_REWRITE_SYSTEM` prompt 同步从"工具使用说明"改为"直接综合三路输入"的指令。
 
 **沉淀**：
+
 1. **先写 eval，再做架构决策**。"自主工具调用"听起来灵活，但只有 eval 数据能告诉你 agent 实际上是否在利用这个灵活性。如果所有 trace 都是同一个工具调用模式，就说明灵活性是幻觉，固定工作流更合适。
 2. **ReAct 适合的场景**：工具集合大、调用哪些工具取决于输入内容（如 web search）。工具集合小且每次都全查时，直接调用比 ReAct 更快、更便宜、更可预测。
 3. **eval 的副产品**：为测 ReAct 写的 `tests/eval_query_rewrite/` harness，改为固定工作流后只需删掉 `ToolCallCapture` 和 `g_tool_called`，其余 fixture 和打分器复用不变——eval 框架本身不依赖具体实现，天然支持架构切换验证。
@@ -164,12 +169,47 @@ def _lookup(name, cands_dict, cands_list):
 **现象**：修改规划时，前端进度显示"正在规划逐日行程（第 2 轮）"，实际上是第 1 轮。
 
 **根因**：`_stage_event` 计算 planner 轮次的公式是 `acc["review_round"] + 1`，设计前提是 **acc 存储节点运行前的状态**（`review_round` 尚未被 planner 递增）。
+
 - `run_stream`（普通规划）在 `on_chain_start` 推事件——节点还没跑，acc 未更新，`review_round=0`，公式得 1 ✅
 - `run_modification_stream` 在 `on_chain_end` 推事件，且代码先 `acc.update(upd)`（planner 已把 `review_round` 从 0 写成 1），再调 `_stage_event`，公式得 2 ❌
 
 **修复**：在 `run_modification_stream` 的 planner 分支里，把 `yield _stage_event(...)` 移到 `acc.update(upd)` **之前**。其余节点（reviewer / meal_search 等）update 位置不变。
 
 **沉淀**：**隐式时序假设是跨函数 bug 的温床**。`_stage_event` 的注释里写了"acc 反映节点运行前的状态"，但这个约定只在 `run_stream` 里被遵守，`run_modification_stream` 里用了不同的事件时机（end vs start），悄悄违反了假设。写跨函数共享的计算逻辑时，如果它依赖调用时机，应在注释里明确说明前提，并在所有调用点检查是否满足。
+
+---
+
+## 问题十：外部 API 重复调用——缓存层的设计（2026-06-08）
+
+**现象**：同一目的地、同一出发日期多次规划时，高德天气和 POI 搜索每次都发出真实 HTTP 请求，延迟叠加、成本浪费，且 API 配额有压力。
+
+**分析**：天气预报以城市+日期为键，4 小时内几乎不变；景点 POI 数据以城市+关键词+最低评分为键，12 小时内基本稳定。两者都是"输入确定 → 输出稳定"的纯函数式调用，天然适合缓存。
+
+**设计**：新增 `app/core/cache.py`，基于 Redis 连接池，提供 `cache_get(key)` / `cache_set(key, value, ttl)` 接口。关键设计是**优雅降级**：`REDIS_URL` 未配置或 Redis 不可达时，模块返回 `None`（未命中），不抛异常，调用方无感知，直接穿透到真实 API。天气 TTL=4h，POI TTL=12h。
+
+**沉淀**：
+
+1. **可选基础设施用优雅降级，不用强依赖**。缓存是性能优化，不是核心功能——用 `try/except` + 返回 `None` 把"Redis 故障"转化为"缓存未命中"，整条链路继续工作。强依赖（启动失败/抛异常）只适合系统无法运行的核心组件。
+2. **缓存 key 要包含所有影响输出的输入维度**。POI 搜索的 key 包含城市、关键词、最低评分三个字段——漏掉任何一个都会导致不同参数的请求共用同一份缓存，产生静默错误（返回错误的缓存结果）。
+3. **延迟初始化 + 全局单例**：Redis 客户端在首次调用时才初始化（`_redis_init_attempted` 标记），避免进程启动时因 Redis 未就绪而失败，也避免每次请求重新建连。
+
+---
+
+## 问题十一：LLM 规划的景点顺序不一定最优——路线优化的边界（2026-06-08）
+
+**现象**：Planner 输出的景点顺序往往不是地理最优路径。景点 A → B → C 可能总路程 12km，而 A → C → B 只需 7km，但 LLM 受 prompt 中景点罗列顺序的影响，不会自动做 TSP 求解。
+
+**设计**：`POST /api/plan/optimize_day` 对单天 timeline 做暴力枚举（`itertools.permutations`）：
+
+- 只排列 `daytime` 景点，`evening` 景点固定末位（夜游场所有顺序意义）
+- lunch / dinner 餐厅**保持相对位置**（排在第几个 daytime 景点之后）并纳入路程计算——这样餐厅位置约束也参与优化，而不是优化后才插入
+- 原始排列也在候选集里，保证 `best_km ≤ original_km`（优化不会变差）
+- 重算 `dist_from_prev_km` 并按位置对齐时间槽（原第 i 个时段赋给优化后第 i 个 daytime 景点）
+- 支持 `POST /api/plan/revert_day` 回退；前端在**首次优化时**保存 Agent 原始 timeline 快照（而非每次），防止二次优化时覆盖快照
+
+**边界与局限**：暴力枚举 O(n!)，景点数 ≤ 5 时（每天一般 3-4 个）可接受；若某天景点 ≥ 7 个应改为贪心/近似算法。TSP 也未考虑交通方式（步行 vs 车行），haversine 直线距离是近似值。
+
+**沉淀**：**LLM 擅长语义规划（主题搭配、节奏感、偏好匹配），不擅长组合优化（TSP、背包）**。两者职责分离：LLM 负责"选什么"，代码负责"排什么顺序"，互不侵入。路线优化是规划后的后处理步骤，不需要重跑 Agent 流水线，写回 DB 后前端实时刷新即可。
 
 ---
 
@@ -180,3 +220,19 @@ Pydantic `Field(description=...)` 在 LLM function calling 场景下，会被序
 因此，description 里可以用自然语言的上下文引用（如"同上规则"），因为 LLM 读的是整个 schema，上下文是完整的。如果受众是人类文档或代码，"同上"就不够——文档可能被单独引用，代码上下文不一定可见。
 
 同理，description 可以写得像 prompt 片段：约束、规则、示例、边界情况说明，而不是像代码注释那样描述"这个字段是什么"。这是利用 LLM 理解自然语言的能力，而非依赖代码逻辑强制约束输出。
+
+---
+
+## 问题十二：LLM 结构化输出"只说不做"——change_log 与实际字段不一致（2026-06-10）
+
+**现象**：profile_updater 的日志显示 `changes=['景点偏好新增「茶馆/茶文化」']`，但同一秒落库的 `attraction_prefs` 列表里根本没有这一项。用户看到日志以为画像更新了，前端却"反复刷新也没用"。
+
+**根因**：`ProfileUpdateResult` 的字段顺序是三个偏好列表在前、`change_log` 在后。模型先按"保留原画像"生成了三个列表，最后写 change_log 时才"想到"应该新增——但前面的列表已经生成完，无法回头修改。这与 planner 在 notes 里声称改了路线、实际 route JSON 没动是同一类问题（自回归生成的结论先于推理）。
+
+**修复（三层）**：
+
+1. **Schema 字段重排**（CoT 顺序约定）：`change_log` 移到三个列表之前——先声明变更，再生成落实了变更的列表。
+2. **Prompt 显式约束**："change_log 中声明的每条变更都必须真实体现在三个列表中"。
+3. **代码守卫**（不信任 LLM）：落库前用代码计算 `existing` 与输出列表的真实 diff；`change_log` 非空但 diff 为空 → 告警并跳过落库；日志同时打印代码算出的 diff 和 LLM 的 change_log，两者不一致一眼可见。
+
+**沉淀**：凡是 LLM 输出中"叙述性字段"（notes/change_log/说明）与"数据字段"（列表/JSON）并存的场景，都要假设两者可能不一致。叙述字段只能用于展示，**真实状态必须以数据字段为准，且用代码 diff 校验**。字段顺序上，叙述/推理字段排在数据字段之前能显著降低不一致概率。

@@ -5,3 +5,4 @@ langgraph>=1.2
 langchain-openai
 httpx
 PyJWT>=2.0
+redis>=5.0

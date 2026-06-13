@@ -207,6 +207,15 @@ def delete_pending_modification(pending_id: str, conn: sqlite3.Connection) -> No
     conn.execute("DELETE FROM pending_modifications WHERE id=?", (pending_id,))
 
 
+def update_plan_json(plan_id: str, user_id: str, new_plan: dict, conn: sqlite3.Connection) -> bool:
+    """更新指定行程的 plan_json，校验 user_id 所有权。返回 True 表示更新成功。"""
+    cur = conn.execute(
+        "UPDATE itineraries SET plan_json=? WHERE id=? AND user_id=?",
+        (json.dumps(new_plan, ensure_ascii=False), plan_id, user_id),
+    )
+    return cur.rowcount > 0
+
+
 def list_itineraries(user_id: str, conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         """SELECT id, parent_id, destination, start_date, end_date, created_at

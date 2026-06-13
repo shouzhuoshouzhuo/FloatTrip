@@ -28,11 +28,20 @@ def _require_user(authorization: str | None) -> str:
     return user_id
 
 
+def _profile_with_stats(user_id: str, conn) -> dict:
+    profile = get_user_profile(user_id, conn)
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM itineraries WHERE user_id=?", (user_id,)
+    ).fetchone()
+    profile["trip_count"] = row["n"] if row else 0
+    return profile
+
+
 @router.get("")
 def get_profile(authorization: str | None = Header(default=None)):
     user_id = _require_user(authorization)
     with get_conn() as conn:
-        return get_user_profile(user_id, conn)
+        return _profile_with_stats(user_id, conn)
 
 
 @router.put("")
@@ -40,4 +49,4 @@ def update_profile(req: ProfileUpdate, authorization: str | None = Header(defaul
     user_id = _require_user(authorization)
     with get_conn() as conn:
         set_user_profile(user_id, req.model_dump(), conn)
-        return get_user_profile(user_id, conn)
+        return _profile_with_stats(user_id, conn)

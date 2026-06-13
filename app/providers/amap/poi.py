@@ -6,6 +6,7 @@ import time
 import urllib.parse
 from typing import Any
 
+from app.core.cache import get_cached, set_cached, poi_cache_key, POI_TTL
 from app.core.http import http_get_json
 from app.providers.amap.client import (
     AMAP_AROUND_SEARCH_URL,
@@ -17,6 +18,22 @@ from app.providers.amap.client import (
 ATTRACTION_TYPE = "风景名胜"
 
 
+# ─── 内部辅助 ────────────────────────────────────────────────
+
+def _text_search_raw(url: str) -> list[dict[str, Any]]:
+    """带限流重试的高德文本搜索原始执行，返回 pois 列表。"""
+    for attempt in range(4):
+        data = http_get_json(url)
+        if data.get("status") == "1":
+            pois = data.get("pois", [])
+            return pois if isinstance(pois, list) else []
+        info = str(data.get("info") or "未知错误")
+        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
+            raise RuntimeError(f"高德搜索失败：{info}")
+        time.sleep(1.2 * (attempt + 1))
+    return []
+
+
 # ─── 周边搜索 ────────────────────────────────────────────────
 
 def search_around_pois(
@@ -25,7 +42,7 @@ def search_around_pois(
     *,
     types: str = "",
     keyword: str = "",
-    radius: int = 1500,
+    radius: int = 1000,
     offset: int = 6,
     max_retries: int = 3,
 ) -> list[dict[str, Any]]:
@@ -70,6 +87,13 @@ def search_attraction_pois(
     page: int = 1,
 ) -> list[dict[str, Any]]:
     """用高德关键字搜索 API 返回景点 POI 列表，类型固定为风景名胜。"""
+    # 缓存逻辑：仅缓存 page=1 的请求
+    cache_key = poi_cache_key(city, keywords) if page == 1 else None
+    if cache_key is not None:
+        cached = get_cached(cache_key)
+        if cached is not None:
+            return cached
+
     params: dict[str, str] = {
         "key": api_key,
         "keywords": keywords,
@@ -82,16 +106,34 @@ def search_attraction_pois(
         "output": "json",
     }
     url = f"{AMAP_TEXT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
-    for attempt in range(4):
-        data = http_get_json(url)
-        if data.get("status") == "1":
-            pois = data.get("pois", [])
-            return pois if isinstance(pois, list) else []
-        info = str(data.get("info") or "未知错误")
-        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
-            raise RuntimeError(f"高德搜索失败：{info}")
-        time.sleep(1.2 * (attempt + 1))
-    return []
+    pois = _text_search_raw(url)
+    if page == 1 and pois:
+        set_cached(cache_key, pois, POI_TTL)
+    return pois
+
+
+def search_city_pois(
+    city: str,
+    api_key: str,
+    *,
+    keywords: str,
+    types: str,
+    offset: int = 8,
+) -> list[dict[str, Any]]:
+    """通用城市关键字搜索（手动编辑换点用）：类型可指定（景点/餐饮），不做缓存（由调用方决定）。"""
+    params: dict[str, str] = {
+        "key": api_key,
+        "keywords": keywords,
+        "types": types,
+        "city": city,
+        "citylimit": "true",
+        "offset": str(offset),
+        "page": "1",
+        "extensions": "all",
+        "output": "json",
+    }
+    url = f"{AMAP_TEXT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+    return _text_search_raw(url)
 
 
 # ─── POI 解析 ────────────────────────────────────────────────
@@ -143,10 +185,16 @@ def poi_to_spot(poi: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(photos, list) and photos and isinstance(photos[0], dict):
         first_photo = str(photos[0].get("url", "")).strip() or None
 
+    cost_raw = str(biz_ext.get("cost", "")).strip() if isinstance(biz_ext, dict) else ""
+
     return {
         "name": poi.get("name", ""),
         "rating": rating,
         "open_time": open_time,
         "location": location,
         "photo": first_photo,
+        "adname": str(poi.get("adname") or ""),
+        "address": normalize_address(poi.get("address", "")),
+        "tel": str(poi.get("tel") or "").strip() or None,
+        "cost": cost_raw or None,
     }

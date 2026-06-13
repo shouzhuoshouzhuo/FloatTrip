@@ -1,131 +1,34 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="morning" data-mascot="on">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI 旅游规划助手</title>
+  <title>途见 · AI 旅行规划</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
-  <script src="https://webapi.amap.com/loader.js"></script>
 </head>
 <body>
+  <div id="root"></div>
 
-<header>
-  <div class="brand">
-    <span class="brand-mark">✈️</span>
-    <span class="brand-text">
-      AI 旅游规划助手
-      <small>LangGraph 多 Agent · DeepSeek · 高德地图</small>
-    </span>
-  </div>
-  <div class="header-spacer"></div>
-  <nav class="nav-links">
-    <a href="/" class="nav-link active">新建规划</a>
-    <a href="/history" class="nav-link">历史行程</a>
-    <a href="/profile" class="nav-link">我的画像</a>
-  </nav>
-  <div class="nav-user" id="nav-user">
-    <!-- 由 JS 填充：未登录显示登录按钮，已登录显示用户名+退出 -->
-  </div>
-</header>
+  <!-- React 18 + Babel Standalone (CDN，无需构建) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin></script>
 
-<div class="shell">
+  <!-- SortableJS（行程手动编辑拖拽） -->
+  <script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js" crossorigin></script>
 
-  <!-- 查询条 -->
-  <section id="query-section">
-    <div class="qb-field">
-      <label for="query-input">描述你的旅行需求（含目的地、日期、偏好）</label>
-      <textarea id="query-input" placeholder="例如：南京 2026-06-10 到 2026-06-12 三天，喜欢历史古迹，想吃本地小吃，慢节奏"></textarea>
-    </div>
-    <button id="submit-btn">✨ 开始规划</button>
-  </section>
+  <!-- API 客户端（纯 JS，无 JSX） -->
+  <script src="/api.js"></script>
 
-  <!-- Loading -->
-  <section id="loading-section">
-    <div class="spinner"></div>
-    <p class="loading-hint">AI 正在规划中，实时进度如下</p>
-    <div id="progress-steps"></div>
-  </section>
-
-  <!-- 错误（缺必填） -->
-  <section id="error-section">
-    <h3 id="error-title">⚠️ 信息不完整，请补充以下内容后重试：</h3>
-    <ul id="error-list"></ul>
-  </section>
-
-  <!-- 结果 -->
-  <section id="result-section">
-    <div class="result-grid">
-
-      <!-- 左列：行程 -->
-      <div class="itinerary">
-
-        <div class="plan-header">
-          <div class="plan-eyebrow">行程总览</div>
-          <div class="plan-title" id="plan-title"></div>
-          <div class="plan-dates" id="plan-dates"></div>
-          <div class="plan-badges" id="plan-badges"></div>
-        </div>
-
-        <!-- 天气降级 banner 由 JS 注入到 .plan-header 之后 -->
-
-        <div class="day-tabs" id="day-tabs"></div>
-        <div class="day-theme" id="day-theme"></div>
-        <div class="timeline" id="timeline"></div>
-
-        <!-- 路线问题卡由 JS 注入到 #history-details 之前 -->
-
-        <details class="history-details" id="history-details">
-          <summary>规划过程日志</summary>
-          <ul class="history-list" id="history-list"></ul>
-        </details>
-
-      </div>
-
-      <!-- 右列：半屏大地图 -->
-      <div class="map-col">
-        <div class="map-frame">
-          <div id="day-map"></div>
-          <div class="day-map-empty" id="day-map-empty">本日暂无可定位的地点</div>
-        </div>
-      </div>
-
-    </div>
-  </section>
-
-</div>
-
-<!-- 登录 / 注册模态框 -->
-<div class="modal-backdrop" id="auth-modal" style="display:none">
-  <div class="modal-card">
-    <button class="modal-close" id="modal-close">✕</button>
-    <div class="modal-tabs">
-      <button class="modal-tab active" id="tab-login">登录</button>
-      <button class="modal-tab" id="tab-register">注册</button>
-    </div>
-    <div id="auth-error" class="auth-error" style="display:none"></div>
-    <div class="modal-form">
-      <label>用户名</label>
-      <input type="text" id="auth-username" placeholder="请输入用户名" autocomplete="username" />
-      <label>密码</label>
-      <input type="password" id="auth-password" placeholder="请输入密码" autocomplete="current-password" />
-      <button class="modal-submit" id="auth-submit">登录</button>
-    </div>
-  </div>
-</div>
-
-<!-- 修改顾虑确认模态框 -->
-<div class="modal-backdrop" id="concern-modal" style="display:none">
-  <div class="concern-modal-card">
-    <div class="concern-icon">⚠️</div>
-    <div class="concern-modal-title">AI 对本次修改有一些顾虑</div>
-    <div class="concern-body" id="concern-body">（顾虑内容）</div>
-    <div class="concern-actions">
-      <button class="concern-btn-cancel" id="concern-cancel">放弃，保留原行程</button>
-      <button class="concern-btn-confirm" id="concern-confirm">确认，继续修改</button>
-    </div>
-  </div>
-</div>
-
-<script src="/app.js"></script>
+  <!-- JSX 组件（Babel 在浏览器端转译） -->
+  <script type="text/babel" src="/tweaks-panel.jsx"></script>
+  <script type="text/babel" src="/mascot.jsx"></script>
+  <script type="text/babel" src="/components.jsx"></script>
+  <script type="text/babel" src="/edit.jsx"></script>
+  <script type="text/babel" src="/pages.jsx"></script>
+  <script type="text/babel" src="/main.jsx"></script>
 </body>
 </html>

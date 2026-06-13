@@ -45,6 +45,7 @@ from app.api.auth_routes import router as auth_router
 from app.api.history_routes import router as history_router
 from app.api.profile_routes import router as profile_router
 from app.api.plan_routes import router as plan_router
+from app.api.sweep_routes import router as sweep_router
 
 load_local_env()
 init_db()
@@ -57,6 +58,7 @@ app.include_router(auth_router)
 app.include_router(history_router)
 app.include_router(profile_router)
 app.include_router(plan_router)
+app.include_router(sweep_router)
 
 app.add_middleware(
     CORSMiddleware,

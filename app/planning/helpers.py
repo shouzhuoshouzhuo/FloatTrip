@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
+import time
 from datetime import date, timedelta
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from app.core.env import load_local_env
 from app.providers.amap.poi import (
@@ -53,6 +57,90 @@ def haversine_km(a: dict[str, float], b: dict[str, float]) -> float:
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(h))
 
 
+def _has_coords(loc: Any) -> bool:
+    """location 是否为含数值经纬度的 dict。"""
+    return (
+        isinstance(loc, dict)
+        and isinstance(loc.get("lat"), (int, float))
+        and isinstance(loc.get("lng"), (int, float))
+    )
+
+
+def cluster_pois_by_location(
+    pois: list[dict[str, Any]], k: int
+) -> dict[str, int]:
+    """按经纬度把候选景点聚成 k 个地理分区，返回 {景点名: 分区编号(0-based)}。
+
+    用于给 Planner 提供「真实坐标距离」的地理分区软提示，替代坐标盲的行政区名
+    （adname）——同一行政区的景点可能相距很远（如玄武湖与中山陵同属玄武区却
+    相距约 10km）。
+
+    - 无坐标的景点归入分区 -1（不参与聚类）。
+    - k<=1 或有效景点过少时，全部归入分区 0。
+    - 确定性：固定种子初始化（按经度排序等距取点），同一输入每次结果一致。
+    """
+    result: dict[str, int] = {}
+    valid: list[tuple[str, dict[str, float]]] = []
+    for s in pois:
+        loc = s.get("location")
+        if _has_coords(loc):
+            valid.append((s["name"], loc))
+        else:
+            result[s["name"]] = -1
+
+    n = len(valid)
+    if n == 0:
+        return result
+    k = max(1, min(k, n))
+    if k == 1:
+        for name, _ in valid:
+            result[name] = 0
+        return result
+
+    # 确定性初始化：按经度（再纬度）排序后等距取 k 个种子
+    ordered = sorted(valid, key=lambda x: (x[1]["lng"], x[1]["lat"]))
+    centroids = [
+        {"lat": ordered[round(i * (n - 1) / (k - 1))][1]["lat"],
+         "lng": ordered[round(i * (n - 1) / (k - 1))][1]["lng"]}
+        for i in range(k)
+    ]
+
+    assign: dict[str, int] = {}
+    for _ in range(20):
+        new_assign = {
+            name: min(range(k), key=lambda c: haversine_km(centroids[c], loc))
+            for name, loc in valid
+        }
+        if new_assign == assign:
+            break
+        assign = new_assign
+        for c in range(k):
+            members = [loc for name, loc in valid if assign[name] == c]
+            if members:
+                centroids[c] = {
+                    "lat": sum(m["lat"] for m in members) / len(members),
+                    "lng": sum(m["lng"] for m in members) / len(members),
+                }
+
+    result.update(assign)
+    return result
+
+
+# ─── 偏好清洗 ─────────────────────────────────────────────────
+
+# LLM 在用户未提供偏好时偶尔吐出的占位垃圾值（应等同于"无偏好"）
+_JUNK_PREF = {"null", "none", "undefined", "n/a", "na", "无", "暂无", "没有", "不限", "无偏好"}
+
+
+def clean_pref(v: str | None) -> str | None:
+    """把偏好字段归一化：去空白；整串为占位垃圾值（如 'null'/'无'）时视为无偏好返回 None。
+
+    只在『整串』等于垃圾 token 时清空，避免误伤 '无辣不欢' 这类正常偏好。
+    """
+    s = (v or "").strip()
+    return None if (not s or s.lower() in _JUNK_PREF) else s
+
+
 # ─── 候选景点池 ───────────────────────────────────────────────
 
 def fetch_city_spots(city: str, api_key: str, *, max_spots: int = 30) -> list[dict[str, Any]]:
@@ -87,41 +175,55 @@ def filter_by_rating(
 
 # ─── 格式化 ──────────────────────────────────────────────────
 
-def format_spots_for_llm(pois: list[dict[str, Any]]) -> str:
-    """候选景点池的紧凑清单（喂给 LLM）。"""
-    lines = []
+_CLUSTER_LABELS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮"
+
+
+def _spot_line(s: dict[str, Any]) -> str:
+    loc = s.get("location") or {}
+    rating = f"{s['rating']:.1f}" if s.get("rating") else "无"
+    open_t = s.get("open_time") or "未知"
+    area = s.get("adname") or "未知"
+    if _has_coords(loc):
+        coord = f"坐标 {loc['lng']:.4f},{loc['lat']:.4f}"
+    else:
+        coord = "坐标未知"
+    return f"- {s['name']}（区域 {area}，评分 {rating}，开放 {open_t}，{coord}）"
+
+
+def format_spots_for_llm(
+    pois: list[dict[str, Any]],
+    cluster_map: dict[str, int] | None = None,
+) -> str:
+    """候选景点池的紧凑清单（喂给 LLM）。
+
+    传入 cluster_map（{景点名: 分区编号}，见 cluster_pois_by_location）时，按
+    『地理分区』分组展示——同一分区的景点连续列出，引导 LLM 把同区景点排在同
+    一天。不传则保持平铺（向后兼容）。
+    """
+    if not cluster_map:
+        return "\n".join(_spot_line(s) for s in pois)
+
+    groups: dict[int, list[dict[str, Any]]] = {}
     for s in pois:
-        loc = s["location"]
-        rating = f"{s['rating']:.1f}" if s.get("rating") else "无"
-        open_t = s.get("open_time") or "未知"
-        lines.append(
-            f"- {s['name']}（评分 {rating}，开放 {open_t}，坐标 {loc['lng']:.4f},{loc['lat']:.4f}）"
-        )
-    return "\n".join(lines)
+        cid = cluster_map.get(s["name"], -1)
+        groups.setdefault(cid, []).append(s)
+
+    blocks = []
+    # 有效分区按编号升序在前，无坐标(-1)放最后
+    for cid in sorted(groups, key=lambda c: (c == -1, c)):
+        if cid == -1:
+            header = "📍其他（无坐标，地理分区未知）"
+        else:
+            label = _CLUSTER_LABELS[cid] if cid < len(_CLUSTER_LABELS) else f"#{cid + 1}"
+            header = f"📍地理分区{label}"
+        lines = "\n".join(_spot_line(s) for s in groups[cid])
+        blocks.append(f"{header}\n{lines}")
+    return "\n\n".join(blocks)
 
 
 def spot_location_map(pois: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
     return {s["name"]: s["location"] for s in pois}
 
-
-# ─── Reviewer 预检工具 ────────────────────────────────────────
-
-def day_proximity_report(route: list[dict[str, Any]], pois: list[dict[str, Any]]) -> str:
-    """每天景点最大跨度（km），作为客观事实喂给 Reviewer。"""
-    loc_map = spot_location_map(pois)
-    lines = []
-    for day in route:
-        coords = [loc_map[s["name"]] for s in day.get("spots", []) if s["name"] in loc_map]
-        span = 0.0
-        if len(coords) >= 2:
-            span = max(
-                haversine_km(coords[i], coords[j])
-                for i in range(len(coords))
-                for j in range(i + 1, len(coords))
-            )
-        names = "、".join(s["name"] for s in day.get("spots", []))
-        lines.append(f"Day {day.get('day')}：{names} —— 当天最大跨度 {span:.1f} km")
-    return "\n".join(lines)
 
 
 _TIME_RANGE_RE = re.compile(r"(\d{1,2})[:：](\d{2})\s*[-~—至]\s*(\d{1,2})[:：](\d{2})")
@@ -196,11 +298,48 @@ def invoke_structured(llm: Any, messages: list[tuple[str, str]], *, retries: int
 
     DeepSeek function_calling 模式偶尔返回 None；重试若干次，
     仍失败则抛出明确错误而非 AttributeError。
+
+    诊断日志：
+    - 每次调用打印耗时（帮助区分"网络慢"和"重试导致慢"）
+    - 出现 None 时打印警告，标明是第几次重试
     """
-    for _ in range(retries):
+    # 估算输入 token（粗略：字符数 / 2 ≈ token 数，仅供参考）
+    total_chars = sum(len(role) + len(content) for role, content in messages)
+    schema_name = getattr(getattr(llm, "schema", None), "__name__", None)
+    # 从 llm 对象尝试取 schema 名（with_structured_output 绑定的 Pydantic 类）
+    if schema_name is None:
+        # langchain with_structured_output 把 schema 存在内部不同位置，尝试常见路径
+        for attr in ("_schema", "schema_", "output_schema"):
+            s = getattr(llm, attr, None)
+            if s and hasattr(s, "__name__"):
+                schema_name = s.__name__
+                break
+    label = schema_name or "unknown"
+
+    for attempt in range(retries):
+        t0 = time.perf_counter()
         result = llm.invoke(messages)
+        elapsed = time.perf_counter() - t0
+
         if result is not None:
+            if attempt > 0:
+                logger.warning(
+                    "[invoke_structured] %s 第 %d 次重试后成功，本次耗时 %.2fs，"
+                    "输入约 %d chars",
+                    label, attempt + 1, elapsed, total_chars,
+                )
+            else:
+                logger.debug(
+                    "[invoke_structured] %s 首次成功，耗时 %.2fs，输入约 %d chars",
+                    label, elapsed, total_chars,
+                )
             return result
+
+        logger.warning(
+            "[invoke_structured] %s 第 %d 次调用返回 None（耗时 %.2fs），准备重试…",
+            label, attempt + 1, elapsed,
+        )
+
     raise RuntimeError(f"结构化输出连续 {retries} 次返回 None，模型未产出有效结果")
 
 
@@ -299,6 +438,15 @@ def restaurant_to_dict(poi: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(photos, list) and photos and isinstance(photos[0], dict):
         photo = str(photos[0].get("url", "")).strip() or None
 
+    open_time_r = (
+        str(biz_ext.get("opentime2", "")).strip()
+        or str(biz_ext.get("opentime", "")).strip()
+        or None
+    )
+    tel_r = str(poi.get("tel") or "").strip() or None
+    type_str = str(poi.get("type") or "")
+    category = (type_str.split(";")[-1].strip() if ";" in type_str else type_str.strip()) or None
+
     return {
         "name": str(poi.get("name", "")),
         "cost": cost_raw or None,
@@ -307,4 +455,7 @@ def restaurant_to_dict(poi: dict[str, Any]) -> dict[str, Any] | None:
         "location": location,
         "address": normalize_address(poi.get("address")),
         "photo": photo,
+        "open_time": open_time_r,
+        "tel": tel_r,
+        "category": category,
     }

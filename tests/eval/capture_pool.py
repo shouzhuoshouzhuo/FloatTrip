@@ -73,7 +73,7 @@ def main() -> None:
         "max_review_rounds": 3,
         "pois": kept,
         "weather_forecast": weather,
-        "expectations": {"max_day_span_km": 15, "outdoor_on_bad_day_max": 0},
+        "expectations": {"outdoor_on_bad_day_max": 0},
     }
     FIXTURES_DIR.mkdir(exist_ok=True)
     out = FIXTURES_DIR / f"{cid}.json"

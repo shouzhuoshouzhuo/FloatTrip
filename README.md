@@ -25,6 +25,8 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 - 🧭 **智能规划** — Planner/Reviewer 多轮循环优化，共享对话记忆确保紧急问题优先修复
 - 🍜 **餐饮推荐** — 基于每天动线搜索周边餐厅，按天并行调用 LLM 推荐午晚餐
 - 🗺️ **地图可视化** — 前端接入高德 JS API，在半屏地图上逐天绘制行程动线与景点标注
+- ✍️ **手动编辑** — 对生成的行程可拖拽换序、搜索换点/换餐厅、改时段，带撤销/重做栈；保存时服务端重算逐段距离
+- 🔌 **多 LLM 提供商** — 通过 `LLM_PROVIDER` 一键切换 DeepSeek / 豆包，统一工厂函数封装，缺 Key 时给出明确报错
 
 所有景点与餐厅数据均来自**高德真实 POI**，不会凭空捏造地点。
 
@@ -34,22 +36,28 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 
 ## 🎬 演示
 
-> 输入：`明天开始上海3日游`
+> 新建规划页
 
 <p align="center">
-  <img src="./static/images/规划进程.png" alt="规划页" width="900" />
+  <img src="./static/images/规划页.png alt="规划页" width="900" />
+</p>
+
+> 规划进度页
+
+<p align="center">
+  <img src="./static/images/规划进度.png" alt="详情页" width="900" />
 </p>
 
 > 规划详情页
 
 <p align="center">
-  <img src="./static/images/上海3日游详情.png" alt="详情页" width="900" />
+  <img src="./static/images/规划详情.png" alt="详情页" width="900" />
 </p>
 
 > 历史规划页
 
 <p align="center">
-  <img src="./static/images/历史行程.png" alt="历史页" width="900" />
+  <img src="./static/images/历史行程页.png" alt="历史页" width="900" />
 </p>
 
 > 我的画像
@@ -78,11 +86,16 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
    ▼
 [Planner Agent] ──────────────────────────┐
    │                                      │
-   ▼                                      │ 评审不通过 (最多 N 轮)
+   ▼                                      │ 评审不通过（最多 N 轮）
 [Reviewer Agent] ─────────────────────────┘
-   │ 通过
+   │ 通过 / 达上限
    ▼
-[高德周边餐饮搜索]
+[Time Check Agent] ←──────────────────────┐
+   │                                      │ 有时间冲突（最多 M 轮）
+   │ 无冲突 / 达上限                      │
+   │                              [Planner Agent]（仅修正时间）
+   ▼
+[高德周边餐饮搜索]（1000m 内）
    │
    ▼
 [Meal Recommend Agent]
@@ -91,7 +104,7 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 [Finalize]  →  含时刻表 + 餐厅 + 距离的完整行程
 ```
 
-**修改规划（迷你图）**：用户对已有行程提修改意见时，跳过 Intent/景点搜索，从上次规划的 checkpoint 恢复状态，只跑 `Planner ⇄ Reviewer（最多 2 轮）→ 餐饮 → Finalize`，Reviewer 验证 Planner 是否真正响应了修改意见。
+**修改规划（迷你图）**：用户对已有行程提修改意见时，跳过 Intent/景点搜索，从上次规划的 checkpoint 恢复状态，只跑 `Planner ⇄ Reviewer（最多 2 轮）→ 餐饮 → Finalize`，Reviewer 验证 Planner 是否真正响应了修改意见（修改流程不接入 Time Check）。
 
 **技术栈**
 
@@ -100,9 +113,9 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 | -------- | --------------------------------- |
 | 后端框架     | FastAPI + Uvicorn                 |
 | Agent 编排 | LangGraph                         |
-| LLM      | DeepSeek（通过 LangChain OpenAI 兼容层） |
+| LLM      | DeepSeek / 豆包（`LLM_PROVIDER` 切换，LangChain OpenAI 兼容层） |
 | 地图数据     | 高德地图 Web 服务 API                   |
-| 前端       | 原生 HTML / CSS / JavaScript        |
+| 前端       | JSX 组件化单页（无构建，浏览器内 Babel）         |
 
 
 ---
@@ -132,10 +145,15 @@ cp .env.example .env.local
 
 ```env
 AMAP_API_KEY=your_amap_key             # 高德 Web 服务 Key（必填，景点/天气）
-DEEPSEEK_API_KEY=your_deepseek_key     # DeepSeek API Key（必填）
+LLM_PROVIDER=deepseek                  # LLM 提供商（可选，deepseek/doubao，默认 deepseek）
+DEEPSEEK_API_KEY=your_deepseek_key     # DeepSeek API Key（用 deepseek 时必填）
+DOUBAO_API_KEY=your_doubao_endpoint    # 豆包 endpoint ID（用 doubao 时必填）
 AMAP_JS_KEY=your_amap_js_key           # 高德 JS API Key（可选，前端地图）
 AMAP_JS_SECURITY_CODE=your_js_secret   # 高德 JS API 安全密钥（可选，与 JS Key 配套）
+REDIS_URL=redis://localhost:6379/0     # Redis 缓存（可选，不填则跳过缓存，不影响功能）
 ```
+
+> 多 LLM 提供商的详细配置、切换方式与故障排查见 [`LLM_PROVIDERS.md`](LLM_PROVIDERS.md)。
 
 > **如何获取 Key？**
 >
@@ -143,7 +161,21 @@ AMAP_JS_SECURITY_CODE=your_js_secret   # 高德 JS API 安全密钥（可选，�
 > - 高德 JS API Key：同一应用下再添加一个 **Web 端 (JS API)** Key，并配置安全密钥 `securityJsCode`（前端地图可视化用，不填则地图区域降级提示）
 > - DeepSeek Key：登录 [DeepSeek 开放平台](https://platform.deepseek.com/) → API Keys
 
-### 4. 启动服务
+### 4. （可选）启动 Redis
+
+如需启用缓存，先启动 Redis，再配置 `REDIS_URL`：
+
+```bash
+# macOS
+brew install redis && brew services start redis
+
+# Docker
+docker run -d -p 6379:6379 redis:alpine
+```
+
+不启动也完全可以正常使用，缓存功能会自动跳过。
+
+### 5. 启动服务
 
 ```bash
 python run.py
@@ -157,8 +189,9 @@ python run.py
 
 ```
 ├── app/
-│   ├── core/          # 环境变量加载、HTTP 工具
-│   ├── llm/           # DeepSeek 客户端工厂
+│   ├── core/          # 环境变量加载、HTTP 工具、Redis 缓存层、SQLite、记忆、鉴权
+│   ├── api/           # 路由模块（auth/history/profile/plan，各带 prefix）
+│   ├── llm/           # LLM 工厂：factory.py（按 LLM_PROVIDER 分发）+ deepseek.py / doubao.py
 │   ├── providers/
 │   │   ├── amap/      # 高德地图 POI 搜索
 │   │   └── weather/   # 高德天气预报
@@ -185,7 +218,7 @@ python run.py
 │   │   ├── harness.py             # 直接读 DB + 单次 LLM 调用 + 确定性打分
 │   │   └── run_eval.py            # 评估入口：--only / --k / --out
 │   └── test_weather_mock.py       # 雨天 mock 冒烟测试
-├── frontend/          # 静态前端（HTML/CSS/JS）
+├── frontend/          # JSX 组件化单页（main/pages/components/mascot/tweaks-panel/edit/api）
 ├── run.py             # 启动入口
 └── .env.example       # 环境变量模板
 ```
@@ -214,6 +247,27 @@ Intent 阶段自动拉取高德天气预报（复用已有 `AMAP_API_KEY`），�
 
 **7. 前端地图动线可视化**
 后端通过 `GET /api/config` 仅向前端下发高德 **JS API** 密钥（不暴露敏感的 REST `AMAP_API_KEY`），前端按天用高德地图绘制景点标注与连线动线，地图占据半屏，未配置 JS Key 时地图区域降级为友好提示，不影响行程文本展示。
+
+**8. Time Check 专项 Agent（开放时间二次修正循环）**
+主流程 Planner-Reviewer 循环结束后，新增 `time_check` 节点专门核查每个景点的安排时段是否与开放时间/闭馆日冲突。它使用 CoT 推理（先写完整逐景点推理过程，再从结论中筛选违规），输出定向修正指令交给 Planner 修正，最多循环 `max_time_check_rounds` 轮（默认 3）。开放时间问题完全由该 Agent 处理，Reviewer 不再涉及，避免双重干预震荡。
+
+**9. Reviewer 职责精简 + 友好提醒机制**
+Reviewer 不再负责开放时间检查（交给 Time Check）。`RouteReview` schema 拆成两个输出字段：`route_modify_opinion`（技术诊断，给 Planner 看）和 `issues`（友好出行提醒，给用户看，禁止"违规/冲突"等批判词）。`day_proximity_report` 增加跨天中心间距计算，不足 5km 时自动标注⚠️，客观检测多天行程在同一区域反复横跳的问题。
+
+**10. Redis 缓存层（可选，优雅降级）**
+高德天气（TTL=4h）和 POI 搜索（TTL=12h）结果自动写入 Redis，重复请求直接命中缓存。`REDIS_URL` 未配置或 Redis 不可用时，`cache.py` 静默降级为透传，整个功能无任何副作用，不影响主流程稳定性。
+
+**11. 路线优化（暴力枚举最短路径）**
+规划完成后，用户可对任意一天点击"优化路线"：后端枚举 daytime 景点全排列，**路程目标只计算景点（daytime + evening）之间的 haversine 距离，餐厅不参与评分**（避免被就餐点位置干扰真实游玩动线），evening 景点固定末位，重算每段 `dist_from_prev_km` 并时间槽顺序对齐后写回 DB。原始排列也在候选内，保证 `best_km ≤ original_km`；若优化距离与原始差距 < 0.05 km 则标记 `improved=false`。支持一键回退到 Agent 原始顺序（`POST /api/plan/revert_day`），前端在首次优化时保存原始 timeline 快照，确保回退数据准确。
+
+**12. 地理分区聚类（替代坐标盲的行政区名）**
+喂给 Planner/Reviewer 的候选池不再只标行政区名（adname）——同一行政区的景点可能相距很远（如玄武湖与中山陵同属玄武区却约 10km）。`cluster_pois_by_location` 用真实经纬度做确定性 k-means（按出行天数定 k，固定种子初始化保证可复现），把候选池按『📍地理分区』分组展示，并在 prompt 中明确"行政区相同不代表距离近，以地理分区为准"，引导模型把同区景点排进同一天、减少跨城横跳。
+
+**13. 手动编辑行程（拖拽 / 换点 / 改时段 + 服务端重算）**
+生成的行程支持进入编辑态手动调整：SortableJS 拖拽换序（时段留在位置上不跟卡走）、调起高德搜索弹层更换或新增景点/餐厅（`GET /api/poi/search` 代理，入参清洗 + 长度限制）、直接编辑每段时间，带完整撤销/重做栈与 `beforeunload` 离开守卫。保存走 `PUT /api/plan/{id}/timeline`，**服务端按 haversine 重算每段 `dist_from_prev_km` 为准**（前端实时显示用同公式但不落库），并对残缺 location 做防御避免 KeyError。
+
+**14. 偏好占位垃圾值清洗**
+LLM 在用户未提供偏好时偶尔吐出 `null`/`none`/`无`/`不限` 等占位垃圾值。`clean_pref` 仅在『整串』等于垃圾 token 时归一为"无偏好"（None），避免误伤"无辣不欢"这类正常偏好，统一作用于 intent 抽取与 query_rewrite 输出。
 
 ---
 
