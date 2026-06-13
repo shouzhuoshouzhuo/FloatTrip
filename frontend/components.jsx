@@ -424,7 +424,6 @@ function RecommendStrip({ candidates, editing }) {
             <div className="rec-name">{c.name}</div>
             <div className="rec-meta">
               {c.rating != null && <span>★ {Number(c.rating).toFixed(1)}</span>}
-              {c.open_time && <span> · {String(c.open_time).slice(0, 11)}</span>}
             </div>
           </div>
         ))}

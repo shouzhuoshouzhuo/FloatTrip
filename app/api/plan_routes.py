@@ -569,3 +569,57 @@ def save_plan_metadata(
         raise HTTPException(status_code=500, detail="保存失败")
 
     return {"ok": True}
+
+
+# ─── 步行路线规划（高德 REST API → polyline 坐标列表） ──────────────
+
+
+@router.get("/api/route/walking")
+def route_walking(
+    origin_lng: float,
+    origin_lat: float,
+    dest_lng: float,
+    dest_lat: float,
+    authorization: str | None = Header(default=None),
+):
+    """调用高德步行路线 REST API，返回解码后的坐标数组供前端绘制。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="需要登录")
+    if not decode_token(authorization[7:]):
+        raise HTTPException(status_code=401, detail="token 无效或已过期")
+
+    import httpx
+    key = amap_key()
+    if not key:
+        raise HTTPException(status_code=503, detail="未配置 AMAP_API_KEY")
+
+    url = "https://restapi.amap.com/v3/direction/walking"
+    params = {
+        "key": key,
+        "origin": f"{origin_lng},{origin_lat}",
+        "destination": f"{dest_lng},{dest_lat}",
+        "output": "json",
+    }
+    try:
+        resp = httpx.get(url, params=params, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"高德请求失败: {e}")
+
+    if data.get("status") != "1" or not data.get("route", {}).get("paths"):
+        raise HTTPException(status_code=502, detail="步行路线规划失败")
+
+    # 拼合所有 step 的 polyline，解码为 [[lng, lat], ...] 坐标列表
+    path = data["route"]["paths"][0]
+    coords: list[list[float]] = []
+    for step in path.get("steps", []):
+        for pair in step.get("polyline", "").split(";"):
+            parts = pair.strip().split(",")
+            if len(parts) == 2:
+                try:
+                    coords.append([float(parts[0]), float(parts[1])])
+                except ValueError:
+                    pass
+
+    return {"coords": coords, "distance": path.get("distance"), "duration": path.get("duration")}

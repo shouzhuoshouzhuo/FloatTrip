@@ -42,10 +42,21 @@ class DayRoute(BaseModel):
 
 
 class TravelRoute(BaseModel):
-    """Planner 产出的逐天路线（含时刻表）。"""
+    """Planner 产出的逐天路线（含时刻表）。
 
-    days: list[DayRoute] = Field(description="逐天路线")
-    notes: str = Field(default="", description="本版说明 / 相比上一版的改动")
+    字段顺序即生成顺序：先 reasoning（CoT 逐维度推理），后 days（落实结论），最后 notes（总结）。
+    """
+
+    reasoning: str = Field(
+        description=(
+            "按【景点相邻】【用户偏好】【无重复】【天气适配】四个维度逐一推理，"
+            "每个维度写出本轮决策或改动结论。"
+        )
+    )
+    days: list[DayRoute] = Field(
+        description="逐天路线，严格落实 reasoning 中的结论——说换就必须换，说保留就保留"
+    )
+    notes: str = Field(default="", description="本版总结，一句话说明本轮主要改动，供历史日志展示")
     modification_concern: str = Field(
         default="",
         description="如果用户修改意见会导致路线质量严重下降（如同天景点地理跨度剧增、"
@@ -172,6 +183,8 @@ class TravelPlanState(BaseModel):
     history: list[str] = Field(default_factory=list)
     # Planner 与 Reviewer 的共享对话记忆（每轮追加，两者均可读）
     planner_reviewer_dialogue: list[str] = Field(default_factory=list)
+    # 上一轮 Planner 未作任何修改时写入的强警告，下一轮注入 feedback 最前面
+    route_stale_warning: str = ""
 
     # 天气（意图识别后拉取）
     weather_forecast: list[dict[str, Any]] = Field(default_factory=list)

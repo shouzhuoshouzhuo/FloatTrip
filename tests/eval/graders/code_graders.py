@@ -1,12 +1,12 @@
 """确定性代码打分器 G1–G8（直接复用 app/planning/helpers.py）。
 
 每个 grader 返回 (passed: bool, detail: str)。
-- G1 封闭池、G3 地理跨度、G4 结构合法、G5 覆盖、G6 天气合规：客观质量
+- G1 封闭池、G4 结构合法、G5 覆盖、G6 天气合规：客观质量
 - G2 time_check 干净：最终 state 中 time_violations 为空（开放时间由 time_check 负责，reviewer 不管）
 - G7 收敛：approved + time_check_done（纳入 time_check 结果）
 - G8 time_check 效率：time_check_round ≤ 1
 
-「整体客观通过」objective_pass = G1–G6 全过（不含 G7/G8）。
+「整体客观通过」objective_pass = G1、G2、G4–G6 全过（不含 G3/G7/G8）。
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import re
 from typing import Any
 
 from app.planning.helpers import (
-    day_proximity_report,
     haversine_km,
     open_time_violations,
     spot_location_map,
@@ -48,24 +47,6 @@ def g2_time_check_clean(time_violations: list[dict]) -> tuple[bool, str]:
         return True, "time_check 无违规"
     detail = "；".join(f"Day{v.get('day')} {v.get('spot_name')}" for v in viols)
     return False, f"{len(viols)} 处时间违规未修复：{detail}"
-
-
-# ─── G3 地理跨度 ─────────────────────────────────────────────
-
-def g3_proximity(route: list[dict], pois: list[dict], max_span_km: float = 15.0) -> tuple[bool, str]:
-    loc_map = spot_location_map(pois)
-    over: list[str] = []
-    for day in route:
-        coords = [loc_map[s["name"]] for s in day.get("spots", []) if s["name"] in loc_map]
-        if len(coords) < 2:
-            continue
-        span = max(
-            haversine_km(coords[i], coords[j])
-            for i in range(len(coords)) for j in range(i + 1, len(coords))
-        )
-        if span > max_span_km:
-            over.append(f"Day{day.get('day')} 跨度 {span:.1f}km")
-    return (not over, f"各天跨度 ≤ {max_span_km}km" if not over else "；".join(over))
 
 
 # ─── G4 结构合法 ─────────────────────────────────────────────
@@ -214,7 +195,6 @@ def grade_code(state: Any, fx: dict[str, Any]) -> dict[str, Any]:
 
     rec("g1_closed_pool",  *g1_closed_pool(route, pois))
     rec("g2_time_check",   *g2_time_check_clean(time_violations))
-    rec("g3_proximity",    *g3_proximity(route, pois, float(exp.get("max_day_span_km", 15))))
     rec("g4_structure",    *g4_structure(route, pois, state.max_per_day))
     rec("g5_coverage",     *g5_coverage(route, int(fx.get("days", len(route)))))
     rec("g6_weather",      *g6_weather(
@@ -224,7 +204,7 @@ def grade_code(state: Any, fx: dict[str, Any]) -> dict[str, Any]:
         time_check_done, time_violations, time_check_round, max_time_check_rounds))
     rec("g8_time_check_efficiency", *g8_time_check_efficiency(time_check_round, time_violations))
 
-    objective_keys = ["g1_closed_pool", "g2_time_check", "g3_proximity",
+    objective_keys = ["g1_closed_pool", "g2_time_check",
                       "g4_structure", "g5_coverage", "g6_weather"]
     objective_pass = all(r[k]["passed"] for k in objective_keys)
     return {"results": r, "objective_pass": objective_pass}

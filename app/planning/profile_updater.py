@@ -12,7 +12,7 @@ import logging
 
 from app.core.database import get_conn
 from app.core.memory import get_user_profile, set_user_profile
-from app.llm.deepseek import build_structured_deepseek
+from app.llm.factory import build_structured_llm
 from app.planning.helpers import invoke_structured
 from app.planning.prompts import PROFILE_UPDATER_SYSTEM
 from app.planning.schemas import ProfileUpdateResult
@@ -39,7 +39,7 @@ def _sync_profile_update(user_id: str, raw_query: str, model_name: str | None) -
     with get_conn() as conn:
         existing = get_user_profile(user_id, conn)
 
-    llm = build_structured_deepseek(ProfileUpdateResult, model=model_name, temperature=0)
+    llm = build_structured_llm(ProfileUpdateResult, model=model_name, temperature=0)
     result = invoke_structured(llm, [
         ("system", PROFILE_UPDATER_SYSTEM),
         ("human", (

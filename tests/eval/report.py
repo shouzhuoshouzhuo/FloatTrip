@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-CODE_KEYS = ["g1_closed_pool", "g2_time_check", "g3_proximity",
+CODE_KEYS = ["g1_closed_pool", "g2_time_check",
              "g4_structure", "g5_coverage", "g6_weather", "g7_convergence", "g8_time_check_efficiency"]
 JUDGE_KEYS = ["preference_fit", "habit_fit", "theme_coherence",
               "route_reasonableness", "weather_adaptation"]

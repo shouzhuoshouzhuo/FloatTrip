@@ -168,7 +168,7 @@ function ensureAMap() {
     }
     return window.AMapLoader.load({
       key: cfg.amap_js_key, version: "2.0",
-      plugins: ["AMap.Driving", "AMap.InfoWindow"],
+      plugins: ["AMap.Driving", "AMap.Walking", "AMap.InfoWindow"],
     });
   })();
   return _amapPromise;
@@ -362,8 +362,50 @@ async function drawNavPairRoute(container, from, to) {
   const inst = _amapByContainer.get(container);
   if (!inst) return false;
   inst.seq += 1;
+  const seq = inst.seq;
   if (inst.driving) inst.driving.clear();
-  drawRealRoute(AMap, inst, [[from.lng, from.lat], [to.lng, to.lat]]);
+  // 清除上一次的步行折线
+  if (inst.walkPolyline) { inst.map.remove(inst.walkPolyline); inst.walkPolyline = null; }
+
+  const origin = [from.lng, from.lat];
+  const dest = [to.lng, to.lat];
+  const accent = cssColor("--accent", "#b5491f");
+
+  const drawLine = (coords) => {
+    if (seq !== inst.seq) return;
+    if (inst.walkPolyline) { inst.map.remove(inst.walkPolyline); inst.walkPolyline = null; }
+    const path = coords.length >= 2 ? coords : [origin, dest];
+    const isFallback = coords.length < 2;
+    inst.walkPolyline = new AMap.Polyline({
+      path,
+      strokeColor: accent,
+      strokeWeight: isFallback ? 3 : 4,
+      strokeOpacity: 0.9,
+      strokeStyle: isFallback ? "dashed" : "solid",
+      strokeDasharray: isFallback ? [6, 6] : undefined,
+      lineJoin: "round", lineCap: "round",
+    });
+    inst.map.add(inst.walkPolyline);
+    inst.map.setFitView(null, false, [48, 48, 48, 48]);
+  };
+
+  // 调用后端步行路线接口（高德 REST API，不依赖 JS SDK 权限）
+  try {
+    const params = new URLSearchParams({
+      origin_lng: from.lng, origin_lat: from.lat,
+      dest_lng: to.lng, dest_lat: to.lat,
+    });
+    const r = await fetch(`/api/route/walking?${params}`, { headers: authHeaders() });
+    if (seq !== inst.seq) return true;
+    if (r.ok) {
+      const { coords } = await r.json();
+      drawLine(coords || []);
+    } else {
+      drawLine([]);
+    }
+  } catch {
+    if (seq === inst.seq) drawLine([]);
+  }
   return true;
 }
 
@@ -374,6 +416,8 @@ async function restoreFullRoute(container, mapPoints) {
   if (!inst) return false;
   inst.seq += 1;
   if (inst.driving) inst.driving.clear();
+  if (inst.walking) inst.walking.clear();
+  if (inst.walkPolyline) { inst.map.remove(inst.walkPolyline); inst.walkPolyline = null; }
   const path = (mapPoints || [])
     .filter(p => p.kind !== "meal" && p.lat && p.lng)
     .map(p => [p.lng, p.lat]);
