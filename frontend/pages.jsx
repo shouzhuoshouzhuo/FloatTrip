@@ -294,6 +294,14 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
   const [optimizedDays, setOptimizedDays] = React.useState({});
   const [optimizingDay, setOptimizingDay] = React.useState(null);
   const [dayMsg, setDayMsg] = React.useState(null);
+  const [hotel, setHotel] = React.useState("");
+  const [notes, setNotes] = React.useState("");
+  const [metaDirty, setMetaDirty] = React.useState(false);
+  const [metaSaving, setMetaSaving] = React.useState(false);
+  const [activeNavKey, setActiveNavKey] = React.useState(null);
+  const [activeNavPair, setActiveNavPair] = React.useState(null);
+  const [nearbyTarget, setNearbyTarget] = React.useState(null);
+  const [themeInput, setThemeInput] = React.useState("");
 
   React.useEffect(() => {
     setPlan(planProp);
@@ -303,6 +311,12 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     setOptimizedDays({});
     setOptimizingDay(null);
     setDayMsg(null);
+    setHotel(planProp?.hotel || "");
+    setNotes(planProp?.notes || "");
+    setMetaDirty(false);
+    setActiveNavKey(null);
+    setActiveNavPair(null);
+    setNearbyTarget(null);
     // 切换行程时清除编辑态，防止残留
     setEditing(false);
     setDraft(null); draftRef.current = null;
@@ -325,6 +339,7 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
   };
 
   const handleOptimize = async (dayNo) => {
+    if (!confirm("将按最短路程优化景点游玩顺序，餐厅需要你重新规划")) return;
     setOptimizingDay(dayNo);
     try {
       const dayI = dayNo - 1;
@@ -339,6 +354,27 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
       }
     } catch (e) { alert(e.message || "优化失败"); }
     finally { setOptimizingDay(null); }
+  };
+
+  const handleNav = (key, pair, nearbyItem) => {
+    if (nearbyItem) {
+      setNearbyTarget({ location: nearbyItem.location, name: nearbyItem.name });
+      return;
+    }
+    if (key === activeNavKey) {
+      setActiveNavKey(null); setActiveNavPair(null);
+    } else {
+      setActiveNavKey(key); setActiveNavPair(pair);
+    }
+  };
+
+  const handleSaveMeta = async () => {
+    setMetaSaving(true);
+    try {
+      await savePlanMetadata(planId, { hotel, notes });
+      setMetaDirty(false);
+    } catch (e) { alert(e.message || "保存失败"); }
+    finally { setMetaSaving(false); }
   };
 
   const handleRevert = async (dayNo) => {
@@ -431,6 +467,12 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     try {
       const days = draftRef.current.map((d, i) => ({ day: d.day ?? i + 1, timeline: d.timeline }));
       const res = await saveTimeline(planId, days);
+      // 保存主题编辑
+      const day_themes = {};
+      draftRef.current.forEach((d, i) => { if (d.theme) day_themes[String(d.day ?? i + 1)] = d.theme; });
+      if (Object.keys(day_themes).length) {
+        try { await savePlanMetadata(planId, { day_themes }); } catch {}
+      }
       const adapted = adaptPlan(res.plan, currentUsername);
       adapted.logs = plan.logs;
       setPlan(adapted);
@@ -485,6 +527,11 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
     });
   };
 
+  // 编辑态主题 input 同步
+  React.useEffect(() => {
+    if (editing && draft) setThemeInput(draft[dayIdx]?.theme || "");
+  }, [editing, dayIdx, editVer]); // eslint-disable-line
+
   // 编辑态视图：draft 经 adaptPlan 渲染（地图点位/items 跟随编辑实时刷新）
   const editedView = React.useMemo(() => {
     if (!editing || !draft) return null;
@@ -511,7 +558,7 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
   const isOptimized = optimizedDays[dayIdx] !== undefined;
 
   return (
-    <div className="page page-fade">
+    <div className="page page-fade trip-detail-page">
       {searchTarget && (
         <PoiSearchModal
           city={plan.destination}
@@ -521,6 +568,12 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
           title={searchTarget.idx != null ? "更换为…" : "添加…"}
           onPick={handlePoiPick}
           onClose={() => setSearchTarget(null)} />
+      )}
+      {nearbyTarget && (
+        <NearbySearchModal
+          location={nearbyTarget.location}
+          name={nearbyTarget.name}
+          onClose={() => setNearbyTarget(null)} />
       )}
       <div className="result-grid">
         <div>
@@ -558,15 +611,31 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
 
           <div className="day-tabs">
             {plan.days.map((d, i) => (
-              <button key={i} className={`day-tab ${i === dayIdx ? "active" : ""}`} onClick={() => setDayIdx(i)}>
+              <button key={i} className={`day-tab ${i === dayIdx ? "active" : ""}`}
+                onClick={() => { setDayIdx(i); setActiveNavKey(null); setActiveNavPair(null); }}>
                 <span className="dt-num">Day {i + 1}</span>
                 <span className="dt-date">{d.date}</span>
               </button>
             ))}
           </div>
 
+          <RecommendStrip candidates={viewPlan.candidate_spots} editing={editing} />
+
           <div className="day-header">
-            <div className="day-theme">{day.theme}</div>
+            {editing ? (
+              <input
+                className="theme-input"
+                value={themeInput}
+                onChange={e => setThemeInput(e.target.value)}
+                onBlur={() => {
+                  const cur = draft[dayIdx]?.theme || "";
+                  if (themeInput !== cur) applyEdit(d => { d[dayIdx].theme = themeInput; });
+                }}
+                onKeyDown={e => e.key === "Enter" && e.target.blur()}
+              />
+            ) : (
+              <div className="day-theme">{day.theme}</div>
+            )}
             {dayMsg && dayMsg.day === dayNo && <span className="day-opt-msg">{dayMsg.text}</span>}
             {!editing && planId && (
               <button className="optimize-btn" onClick={enterEdit}>✏️ 编辑行程</button>
@@ -592,10 +661,25 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
                 onReplace={(idx) => setSearchTarget({ dayI: dayIdx, idx })}
                 onDelete={handleDelete}
                 onTimeChange={handleTimeChange}
-                onAdd={(addType) => setSearchTarget({ dayI: dayIdx, idx: null, addType })} />
+                onAdd={(addType) => setSearchTarget({ dayI: dayIdx, idx: null, addType })}
+                onDropCandidate={(idx, candidate) => {
+                  applyEdit(d => {
+                    const old = d[dayIdx].timeline[idx];
+                    d[dayIdx].timeline[idx] = {
+                      ...old,
+                      name: candidate.name,
+                      rating: candidate.rating ?? null,
+                      open_time: candidate.open_time ?? null,
+                      location: candidate.location,
+                      photo: candidate.photo ?? null,
+                      address: candidate.address ?? null,
+                      tip: null,
+                    };
+                  });
+                }} />
             </>
           ) : (
-            <Timeline items={day.items} key={dayIdx} />
+            <Timeline items={day.items} key={dayIdx} onNav={handleNav} activeNavKey={activeNavKey} />
           )}
 
           <div className="tip-card">
@@ -610,6 +694,27 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
             </div>
           </div>
 
+          {planId && (
+            <div className="hotel-notes-section">
+              <div className="hn-field">
+                <label className="hn-label">🏨 住宿</label>
+                <input className="hn-input" value={hotel} placeholder="记录酒店名称、价格…"
+                  onChange={e => { setHotel(e.target.value); setMetaDirty(true); }} />
+              </div>
+              <div className="hn-field">
+                <label className="hn-label">📝 备注</label>
+                <textarea className="hn-input hn-textarea" value={notes} rows={2}
+                  placeholder="特别要求、注意事项…"
+                  onChange={e => { setNotes(e.target.value); setMetaDirty(true); }} />
+              </div>
+              {metaDirty && (
+                <button className="go-btn" style={{ marginTop: 8 }} disabled={metaSaving} onClick={handleSaveMeta}>
+                  {metaSaving ? "保存中…" : "保存行程备注"}
+                </button>
+              )}
+            </div>
+          )}
+
           {plan.logs && plan.logs.length > 0 && (
             <details className="log-details">
               <summary>规划过程日志（{plan.logs.length} 步）</summary>
@@ -619,7 +724,8 @@ function TripDetailPage({ plan: planProp, planId: planIdProp, onRequestModify, o
         </div>
 
         <div className="map-col">
-          <MapPanel day={day} dayIdx={dayIdx} />
+          <MapPanel day={day} dayIdx={dayIdx} navPair={activeNavPair}
+            onNavClear={() => { setActiveNavKey(null); setActiveNavPair(null); }} />
         </div>
       </div>
 

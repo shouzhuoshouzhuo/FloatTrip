@@ -169,7 +169,7 @@ function DayMap({ mapPoints, dayKey }) {
   );
 }
 
-function MapPanel({ day, dayIdx }) {
+function MapPanel({ day, dayIdx, navPair, onNavClear }) {
   const amapRef = React.useRef(null);
   // null=尝试加载中（显示 SVG 占位） true=高德地图就绪 false=降级 SVG
   const [amapReady, setAmapReady] = React.useState(null);
@@ -185,6 +185,16 @@ function MapPanel({ day, dayIdx }) {
     return () => { alive = false; };
   }, [dayIdx, hasGeo, ptsSig]);
 
+  // 导航对 / 恢复全日路线
+  React.useEffect(() => {
+    if (amapReady !== true) return;
+    if (navPair) {
+      drawNavPairRoute(amapRef.current, navPair.from, navPair.to);
+    } else {
+      restoreFullRoute(amapRef.current, day.mapPoints);
+    }
+  }, [navPair, amapReady]); // eslint-disable-line
+
   // 组件卸载时销毁地图实例
   React.useEffect(() => () => destroyAmap(amapRef.current), []);
 
@@ -192,9 +202,12 @@ function MapPanel({ day, dayIdx }) {
     <div className="map-frame">
       <div className="map-head">
         <span className="mh-title">Day {dayIdx + 1} 路线图</span>
-        {amapReady !== true && <span className="mh-note">地点示意 · 相对位置</span>}
+        {navPair && onNavClear && (
+          <button className="mh-nav-clear" onClick={onNavClear}>✕ 退出导航</button>
+        )}
+        {amapReady !== true && !navPair && <span className="mh-note">地点示意 · 相对位置</span>}
       </div>
-      <div style={{ position: "relative" }}>
+      <div className="map-stage">
         <DayMap mapPoints={day.mapPoints} dayKey={dayIdx} />
         {hasGeo && (
           <div
@@ -212,7 +225,7 @@ function MapPanel({ day, dayIdx }) {
       <div className="map-legend">
         <span><span className="legend-dot" style={{ background: "var(--accent)" }}></span>景点</span>
         <span><span className="legend-dot" style={{ background: "var(--second)", borderRadius: 2 }}></span>餐厅</span>
-        {amapReady !== true && <span style={{ marginLeft: "auto" }}>虚线为当日游览顺序</span>}
+        {amapReady !== true && <span style={{ marginLeft: "auto" }}>虚线为景点游览顺序</span>}
       </div>
     </div>
   );
@@ -241,7 +254,23 @@ const PERIOD = {
   evening:   { label: "夜间", cls: "evening" },
 };
 
-function AttractionCard({ item }) {
+// 站点间通行标注：≤3km 按步行（约 4km/h）估时，更远建议乘车
+function walkNote(dist) {
+  if (dist == null || !(dist > 0)) return null;
+  const d = Number(dist);
+  if (d <= 3) return `步行 ${d} km · 约 ${Math.max(1, Math.round(d * 15))} 分钟`;
+  return `相距 ${d} km · 建议乘车`;
+}
+
+function WalkIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13 4a2 2 0 1 0 0-.1M7 21l3-4.5L8 12l2.5-3 2.5 2 3 1" />
+    </svg>
+  );
+}
+
+function AttractionCard({ item, onNearby }) {
   const p = PERIOD[item.period] || PERIOD.morning;
   return (
     <div className="tl-node">
@@ -255,9 +284,15 @@ function AttractionCard({ item }) {
           <div className="t-meta">
             {item.start && <span>{item.start}{item.end ? ` – ${item.end}` : ""}</span>}
             {item.rating != null && <span className="star">★ {Number(item.rating).toFixed(1)}</span>}
+            {item.cost && <span>💰 ¥{item.cost}/人</span>}
             {item.open && <span>开放 {item.open}</span>}
           </div>
+          {item.address && <div className="t-address">📍 {item.address}</div>}
+          {item.tel && <div className="t-address">📞 {item.tel}</div>}
           {item.note && <div className="tip-box">💡 {item.note}</div>}
+          {onNearby && item.location && (
+            <button className="nearby-btn" onClick={() => onNearby(item)}>📍 周边搜索</button>
+          )}
         </div>
       </div>
     </div>
@@ -269,7 +304,7 @@ function MealCard({ item }) {
   if (item.no_restaurant) {
     return (
       <div className="tl-node is-meal">
-        <div className="t-card">
+        <div className="t-card meal-card">
           <div className="t-body">
             <div className="t-title"><span className="meal-flag">{label}</span>该时段附近暂无餐厅数据</div>
             <div className="t-note">建议出发前自行规划{label}，或让我换一片区域再找找。</div>
@@ -280,7 +315,7 @@ function MealCard({ item }) {
   }
   return (
     <div className="tl-node is-meal">
-      <div className="t-card">
+      <div className="t-card meal-card">
         <Thumb photo={item.photo} seed={item.seed} alt={item.name} />
         <div className="t-body">
           <div className="t-title">
@@ -290,8 +325,11 @@ function MealCard({ item }) {
           <div className="t-meta">
             {item.rating != null && <span className="star">★ {Number(item.rating).toFixed(1)}</span>}
             {item.cost && <span>¥{item.cost} /人</span>}
+            {item.category && <span>{item.category}</span>}
             {item.addr && <span>{item.addr}</span>}
           </div>
+          {item.open && <div className="t-address">🕐 {item.open}</div>}
+          {item.tel && <div className="t-address">📞 {item.tel}</div>}
           {item.reason && <div className="reason-box">{item.reason}</div>}
         </div>
       </div>
@@ -299,17 +337,189 @@ function MealCard({ item }) {
   );
 }
 
-function Timeline({ items }) {
+// 导航行：夹在任意相邻两个 item 之间
+function NavRow({ itemA, itemB, onNav, isActive }) {
+  const hasCoords = itemA?.location?.lat && itemA?.location?.lng
+    && itemB?.location?.lat && itemB?.location?.lng;
+  if (!hasCoords) return null;
+  const dist = itemB.dist;
+  return (
+    <div className="nav-row">
+      <div className="tl-when nav-row-dist">{dist ? `${dist}km` : ""}</div>
+      <div className="tl-spine nav-row-spine">
+        <div className="tl-line" style={{ height: 8 }}></div>
+        <div className={`nav-row-node${isActive ? " active" : ""}`}>🧭</div>
+        <div className="tl-line" style={{ flex: 1 }}></div>
+      </div>
+      <div className="nav-row-content">
+        <button
+          className={`nav-row-btn${isActive ? " active" : ""}`}
+          onClick={() => onNav({ from: itemA.location, to: itemB.location })}
+        >🧭 导航</button>
+        <span className="nav-row-label">{itemA.name} → {itemB.name}</span>
+      </div>
+    </div>
+  );
+}
+
+// 时间轴：左侧时间槽 + 轴线，相邻两项之间插入导航行
+function Timeline({ items, onNav, activeNavKey }) {
   return (
     <div className="timeline">
-      {items.map((item, i) => (
-        <React.Fragment key={i}>
-          {item.dist != null && item.dist > 0 && (
-            <div className="dist-pill">↕ {item.dist} km</div>
+      {items.map((item, i) => {
+        const isMeal = item.type !== "attraction";
+        const prevItem = i > 0 ? items[i - 1] : null;
+        const navKey = i > 0 ? String(i) : null;
+        return (
+          <React.Fragment key={i}>
+            {i > 0 && onNav && (
+              <NavRow
+                itemA={prevItem}
+                itemB={item}
+                onNav={(pair) => onNav(activeNavKey === navKey ? null : navKey, pair)}
+                isActive={activeNavKey === navKey}
+              />
+            )}
+            <div className="tl-row">
+              <div className="tl-when">{isMeal ? "" : (item.start || "")}</div>
+              <div className="tl-spine tl-spine-dot"><span className={`tl-dot${isMeal ? " meal" : ""}`}></span></div>
+              {isMeal
+                ? <MealCard item={item} />
+                : <AttractionCard item={item} onNearby={onNav ? (it) => onNav("nearby:" + i, null, it) : undefined} />
+              }
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── 候选景点推荐横滚条 ──────────────────────────── */
+function RecommendStrip({ candidates, editing }) {
+  const [detail, setDetail] = React.useState(null);
+
+  if (!candidates || !candidates.length) return null;
+  return (
+    <div className="recommend-strip">
+      <div className="recommend-label">
+        🗺 LLM 候选景点池{editing ? " · 拖入时间轴可替换景点" : ""}
+      </div>
+      <div className="recommend-scroll">
+        {candidates.map((c, i) => (
+          <div
+            key={i}
+            className={`rec-card${editing ? " draggable" : ""}${detail === c ? " rec-card-active" : ""}`}
+            draggable={editing}
+            onDragStart={editing ? (e) => {
+              e.dataTransfer.setData("application/json", JSON.stringify(c));
+              e.dataTransfer.effectAllowed = "copy";
+            } : undefined}
+            onClick={() => setDetail(detail === c ? null : c)}
+          >
+            <div
+              className="rec-thumb"
+              style={c.photo ? { backgroundImage: `url('${c.photo}')` } : undefined}
+            />
+            <div className="rec-name">{c.name}</div>
+            <div className="rec-meta">
+              {c.rating != null && <span>★ {Number(c.rating).toFixed(1)}</span>}
+              {c.open_time && <span> · {String(c.open_time).slice(0, 11)}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+      {detail && (
+        <div className="rec-detail-popup">
+          <button className="rec-detail-close" onClick={() => setDetail(null)}>✕</button>
+          {detail.photo && (
+            <div className="rec-detail-photo" style={{ backgroundImage: `url('${detail.photo}')` }} />
           )}
-          {item.type === "attraction" ? <AttractionCard item={item} /> : <MealCard item={item} />}
-        </React.Fragment>
-      ))}
+          <div className="rec-detail-name">{detail.name}</div>
+          <div className="rec-detail-rows">
+            {detail.rating != null && (
+              <div className="rec-detail-row">
+                <span className="rec-detail-icon">★</span>
+                <span>{Number(detail.rating).toFixed(1)} 分</span>
+              </div>
+            )}
+            {detail.address && (
+              <div className="rec-detail-row">
+                <span className="rec-detail-icon">📍</span>
+                <span>{detail.address}</span>
+              </div>
+            )}
+            {detail.open_time && (
+              <div className="rec-detail-row">
+                <span className="rec-detail-icon">🕐</span>
+                <span>{detail.open_time}</span>
+              </div>
+            )}
+            {detail.cost && (
+              <div className="rec-detail-row">
+                <span className="rec-detail-icon">💰</span>
+                <span>¥{detail.cost}/人</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── 周边搜索弹层 ────────────────────────────────── */
+function NearbySearchModal({ location, name, onClose }) {
+  const [tab, setTab] = React.useState("attraction");
+  const [radius, setRadius] = React.useState(1500);
+  const [results, setResults] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState("");
+
+  const doSearch = async (t, r) => {
+    setLoading(true); setErr(""); setResults(null);
+    try {
+      const res = await searchNearby(location.lat, location.lng, t === "attraction" ? "风景名胜" : "餐饮服务", r);
+      setResults(res);
+      if (!res.length) setErr("附近暂无数据，试试调大半径");
+    } catch (e) { setErr(e.message || "搜索失败"); }
+    finally { setLoading(false); }
+  };
+
+  React.useEffect(() => { doSearch(tab, radius); }, []); // eslint-disable-line
+
+  const switchTab = (t) => { setTab(t); doSearch(t, radius); };
+  const changeRadius = (r) => { setRadius(r); doSearch(tab, r); };
+
+  return (
+    <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal-card nearby-modal">
+        <button className="modal-close" onClick={onClose}>✕</button>
+        <div className="modal-title">📍 {name} 周边</div>
+        <div className="nearby-tabs">
+          <button className={`nearby-tab${tab === "attraction" ? " active" : ""}`} onClick={() => switchTab("attraction")}>景点</button>
+          <button className={`nearby-tab${tab === "restaurant" ? " active" : ""}`} onClick={() => switchTab("restaurant")}>餐厅</button>
+        </div>
+        <div className="nearby-radius-row">
+          {[500, 1000, 1500, 3000].map(r => (
+            <button key={r} className={`radius-btn${radius === r ? " active" : ""}`} onClick={() => changeRadius(r)}>{r}m</button>
+          ))}
+        </div>
+        {loading && <div className="poi-search-err">搜索中…</div>}
+        {err && <div className="poi-search-err">{err}</div>}
+        <div className="nearby-results">
+          {(results || []).map((p, i) => (
+            <div key={i} className="nearby-result">
+              <div className="nearby-result-name">{p.name}</div>
+              <div className="nearby-result-meta">
+                {p.rating != null && <span>★ {Number(p.rating).toFixed(1)}</span>}
+                {p.distance != null && <span> · {p.distance}m</span>}
+                {p.address && <span> · {p.address}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -380,4 +590,8 @@ function SweepEvalPanel({ code, reviewRounds, timeCheckRounds, profileUpdate, di
   );
 }
 
-Object.assign(window, { JourneyLoading, DayMap, MapPanel, Timeline, Thumb, SweepEvalPanel });
+Object.assign(window, {
+  JourneyLoading, DayMap, MapPanel, Timeline, NavRow, Thumb,
+  RecommendStrip, NearbySearchModal,
+  SweepEvalPanel, walkNote, WalkIcon,
+});

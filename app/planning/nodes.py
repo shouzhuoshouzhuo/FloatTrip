@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 logger = logging.getLogger(__name__)
 
-from app.llm.deepseek import build_structured_deepseek
+from app.llm.factory import build_structured_llm
 from app.providers.amap.poi import search_around_pois
 from app.planning.schemas import (
     DayMealPick,
@@ -25,7 +25,6 @@ from app.planning.schemas import (
 )
 from app.planning.helpers import (
     amap_key,
-    day_proximity_report,
     dinner_anchor_spot,
     fetch_city_spots,
     fetch_weather_for_dates,
@@ -60,7 +59,7 @@ from langgraph.graph import END
 
 def make_query_rewrite_node(model_name: str | None, user_id: str | None):
     """固定工作流：直接读取用户画像，单次结构化 LLM 调用改写 query 并输出冲突解析后的偏好字段。"""
-    rewrite_llm = build_structured_deepseek(RewrittenQuery, model=model_name, temperature=0)
+    rewrite_llm = build_structured_llm(RewrittenQuery, model=model_name, temperature=0)
 
     def query_rewrite(state: TravelPlanState) -> dict[str, Any]:
         raw = state.query
@@ -112,7 +111,7 @@ def make_query_rewrite_node(model_name: str | None, user_id: str | None):
 # ─── 意图识别 ────────────────────────────────────────────────
 
 def make_intent_node(model_name: str | None, profile_hint: str = ""):
-    llm = build_structured_deepseek(IntentExtraction, model=model_name, temperature=0)
+    llm = build_structured_llm(IntentExtraction, model=model_name, temperature=0)
 
     def intent(state: TravelPlanState) -> dict[str, Any]:
         today = date.today()
@@ -216,7 +215,7 @@ def _travel_dates_block(state: TravelPlanState) -> str:
 
 
 def make_planner_node(model_name: str | None):
-    llm = build_structured_deepseek(TravelRoute, model=model_name, temperature=0.3)
+    llm = build_structured_llm(TravelRoute, model=model_name, temperature=0.3)
 
     def planner(state: TravelPlanState) -> dict[str, Any]:
         # ① 上一轮景点集合（用于 spot diff，检测"notes 说改但 JSON 未变"）
@@ -234,16 +233,25 @@ def make_planner_node(model_name: str | None):
                 if is_user_opinion else
                 "评审修改意见（请据此修订）"
             )
+            # 上一轮检测到未改动时注入高优先级警告
+            stale_block = ""
+            if state.route_stale_warning:
+                stale_block = (
+                    f"\n\n🚨🚨【严重警告：上一轮你的输出与上上轮完全相同，days 字段一个景点都没变！】\n"
+                    f"具体记录：{state.route_stale_warning}\n"
+                    f"这说明你只改了 reasoning/notes 文字，但 days 里的景点列表原封不动地回显了旧版本。\n"
+                    f"本轮你必须真正修改 days——至少换掉评审意见中明确要求替换的景点，"
+                    f"或重新分配各天的景点组合。如果 days 再次与上一版完全相同，将被系统标记为规划失败。\n"
+                )
             feedback = (
                 f"\n\n上一版路线：\n{json.dumps(state.route, ensure_ascii=False)}\n\n"
-                f"{opinion_label}：\n{state.route_modify_opinion}\n\n"
-                f"⚠️ 重要：你在 notes 中描述的所有改动必须在 days 字段的景点列表中真实体现。"
-                f"Reviewer 直接读取 route JSON，不读 notes 文字——notes 说改了但 JSON 未变 = 没改。"
+                f"{stale_block}"
+                f"{opinion_label}：\n{state.route_modify_opinion}"
             )
 
         weather_text = format_weather_for_llm(state.weather_forecast)
         weather_block = (
-            f"\n\n出行天气预报（请严格依据此安排景点，雨雪天优先室内）：\n{weather_text}"
+            f"\n\n出行天气预报：\n{weather_text}"
             if weather_text else "\n\n（无天气信息，按晴天规划）"
         )
 
@@ -281,6 +289,8 @@ def make_planner_node(model_name: str | None):
         route = [d.model_dump() for d in result.days]
         rnd = state.review_round + 1
 
+        logger.info("[planner 第%d轮] reasoning：\n%s", rnd, result.reasoning or "(空)")
+
         # ④ spot diff：检测实际是否有景点变化，透明化"说改但没改"
         new_spots = {s["name"] for day in route for s in day.get("spots", [])}
         added   = new_spots - old_spots
@@ -295,11 +305,16 @@ def make_planner_node(model_name: str | None):
         note         = f"[第{rnd}轮] Planner 出稿：{result.notes or '(无说明)'}"
         planner_line = f"[第{rnd}轮] Planner：{result.notes or '(无说明)'}{change_summary}"
 
-        # ⑤ route 与上一轮完全相同时写 warning（比较完整 JSON，时间/顺序改动不误报）
+        # ⑤ route 与上一轮完全相同时写 warning + 设置 stale_warning 供下一轮注入
         history = state.history
         old_route_json = json.dumps(state.route, ensure_ascii=False, sort_keys=True)
         new_route_json = json.dumps(route, ensure_ascii=False, sort_keys=True)
-        if state.route_modify_opinion and state.route and old_route_json == new_route_json:
+        is_unchanged = bool(state.route_modify_opinion and state.route and old_route_json == new_route_json)
+        new_stale_warning = (
+            f"第{rnd}轮 Planner 输出的 route JSON 与第{rnd - 1}轮完全一致，days 字段零改动。"
+            if is_unchanged else ""
+        )
+        if is_unchanged:
             history = history + [
                 f"⚠️ [第{rnd}轮] Planner route 与上一轮完全相同，未作任何修改",
             ]
@@ -311,6 +326,7 @@ def make_planner_node(model_name: str | None):
             "history": history,
             "planner_reviewer_dialogue": state.planner_reviewer_dialogue + [planner_line],
             "modification_concern": result.modification_concern or None,
+            "route_stale_warning": new_stale_warning,
         }
 
     return planner
@@ -319,16 +335,12 @@ def make_planner_node(model_name: str | None):
 # ─── Reviewer ────────────────────────────────────────────────
 
 def make_reviewer_node(model_name: str | None):
-    llm = build_structured_deepseek(RouteReview, model=model_name, temperature=0)
+    llm = build_structured_llm(RouteReview, model=model_name, temperature=0)
 
     def reviewer(state: TravelPlanState) -> dict[str, Any]:
-        proximity  = day_proximity_report(state.route, state.pois)
         bad_unknown = unknown_spots(state.route, state.pois)
 
-        facts = (
-            f"每天地理跨度：\n{proximity}\n\n"
-            f"非候选池景点：{('；'.join(bad_unknown)) or '无'}"
-        )
+        facts = f"非候选池景点：{('；'.join(bad_unknown)) or '无'}"
 
         weather_text = format_weather_for_llm(state.weather_forecast)
         weather_block = (
@@ -449,7 +461,7 @@ def make_time_check_node(model_name: str | None):
     职责单一——只判断每个景点的 start_time/end_time 是否符合开放时间和闭馆日；
     其他维度（地理、习惯、天气、合法性）一概不管。
     """
-    llm = build_structured_deepseek(TimeCheckResult, model=model_name, temperature=0)
+    llm = build_structured_llm(TimeCheckResult, model=model_name, temperature=0)
 
     def time_check(state: TravelPlanState) -> dict[str, Any]:
         rnd = state.time_check_round + 1
@@ -575,7 +587,7 @@ def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
 def make_meal_recommend_node(model_name: str | None):
     from concurrent.futures import ThreadPoolExecutor
 
-    llm = build_structured_deepseek(SingleDayMealPick, model=model_name, temperature=0)
+    llm = build_structured_llm(SingleDayMealPick, model=model_name, temperature=0)
 
     def meal_recommend(state: TravelPlanState) -> dict[str, Any]:
 
@@ -691,7 +703,7 @@ def make_spot_tips_node(model_name: str | None):
 
     非关键路径：LLM 失败时降级为无贴士，不阻塞行程生成。
     """
-    llm = build_structured_deepseek(SpotTipsResult, model=model_name, temperature=0)
+    llm = build_structured_llm(SpotTipsResult, model=model_name, temperature=0)
 
     def spot_tips_node(state: TravelPlanState) -> dict[str, Any]:
         spot_names: list[str] = []
@@ -790,6 +802,9 @@ def _finalize_impl(state: TravelPlanState) -> dict[str, Any]:
                 "photo": info.get("photo"),
                 "location": info.get("location"),
                 "tip": state.spot_tips.get(spot["name"]),
+                "address": info.get("address"),
+                "tel": info.get("tel"),
+                "cost": info.get("cost"),
             })
             if spot.get("name") == morning_anchor_name and not lunch_inserted:
                 lunch_inserted = True
@@ -835,6 +850,15 @@ def _finalize_impl(state: TravelPlanState) -> dict[str, Any]:
         "route_issues": list(state.reviewer_issues or []),
         "days": days_out,
     }
+    placed_names = {s["name"] for day_r in state.route for s in day_r.get("spots", [])}
+    candidate_spots = [
+        {k: v for k, v in s.items()
+         if k in ("name", "rating", "photo", "location", "open_time", "address")}
+        for s in state.pois
+        if s.get("name") and s["name"] not in placed_names
+    ][:20]
+    final_plan["candidate_spots"] = candidate_spots
+
     history = state.history + ["finalize：已组装最终计划"]
     # 规划过程日志随 plan 一起落库，历史详情页回看时可还原完整规划过程
     final_plan["history"] = history

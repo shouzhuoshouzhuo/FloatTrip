@@ -271,8 +271,8 @@ async function initAmapForDay(container, points) {
     let spotNo = 0;  // 景点单独编号，餐厅不占号
     pts.forEach((pt, i) => {
       const pos = [pt.lng, pt.lat];
-      path.push(pos);
       const isMeal = pt.kind === "meal";
+      if (!isMeal) path.push(pos);  // 路线只连景点
       const content = `<div style="width:28px;height:28px;display:grid;place-items:center;
         border-radius:${isMeal ? "7px" : "50%"};
         background:${isMeal ? second : accent};
@@ -339,6 +339,48 @@ async function saveTimeline(plan_id, days) {
   return r.json();
 }
 
+async function searchNearby(lat, lng, type, radius = 1500) {
+  const qs = new URLSearchParams({ lat, lng, type, radius });
+  const r = await fetch(`/api/poi/nearby?${qs}`, { headers: authHeaders() });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "搜索失败"); }
+  return (await r.json()).results || [];
+}
+
+async function savePlanMetadata(plan_id, data) {
+  const r = await fetch(`/api/plan/${encodeURIComponent(plan_id)}/metadata`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "保存失败"); }
+  return r.json();
+}
+
+async function drawNavPairRoute(container, from, to) {
+  let AMap;
+  try { AMap = await ensureAMap(); } catch { return false; }
+  const inst = _amapByContainer.get(container);
+  if (!inst) return false;
+  inst.seq += 1;
+  if (inst.driving) inst.driving.clear();
+  drawRealRoute(AMap, inst, [[from.lng, from.lat], [to.lng, to.lat]]);
+  return true;
+}
+
+async function restoreFullRoute(container, mapPoints) {
+  let AMap;
+  try { AMap = await ensureAMap(); } catch { return false; }
+  const inst = _amapByContainer.get(container);
+  if (!inst) return false;
+  inst.seq += 1;
+  if (inst.driving) inst.driving.clear();
+  const path = (mapPoints || [])
+    .filter(p => p.kind !== "meal" && p.lat && p.lng)
+    .map(p => [p.lng, p.lat]);
+  if (path.length >= 2) drawRealRoute(AMap, inst, path);
+  return true;
+}
+
 /* ── Plan data adapter ────────────────────────────── */
 const WEATHER_ICON_MAP = {
   "晴": "☀️", "少云": "🌤", "晴间多云": "⛅", "多云": "☁️",
@@ -370,9 +412,9 @@ function adaptWeather(forecast, startDate, daysCount) {
       d.setDate(d.getDate() + i);
       dayLabel = `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, "0")} 周${weekdays[d.getDay()]}`;
     }
-    const text = w.dayweather || w.weather || "晴";
-    const hi = w.daytemp || w.day_temp || w.temperature || "—";
-    const lo = w.nighttemp || w.night_temp || "—";
+    const text = w.day_weather || w.dayweather || w.weather || "晴";
+    const hi = w.day_temp || w.daytemp || w.temperature || "—";
+    const lo = w.night_temp || w.nighttemp || "—";
     return { day: `Day ${i + 1} · ${dayLabel.split(" ")[1] || ""}`, icon: weatherIcon(text), text, hi, lo };
   });
 }
@@ -459,6 +501,10 @@ function adaptPlan(backendPlan, username) {
           open: it.open_time,
           photo: it.photo || null,
           note: it.tip || null,  // spot_tips Agent 生成的游玩注意事项
+          location: it.location || null,
+          address: it.address || null,
+          tel: it.tel || null,
+          cost: it.cost || null,
         };
       } else {
         // lunch / dinner
@@ -472,6 +518,10 @@ function adaptPlan(backendPlan, username) {
           reason: it.reason,
           no_restaurant: it.no_restaurant || !it.name,
           photo: it.photo || null,
+          location: it.location || null,
+          tel: it.tel || null,
+          open: it.open_time || null,
+          category: it.category || null,
         };
       }
     });
@@ -502,9 +552,10 @@ function adaptPlan(backendPlan, username) {
       dateLabel = `${dt.getMonth() + 1 < 10 ? "0" : ""}${dt.getMonth() + 1}.${String(dt.getDate()).padStart(2, "0")} 周${weekdays[dt.getDay()]}`;
     }
 
+    const dayThemes = backendPlan.day_themes || {};
     return {
       date: dateLabel,
-      theme: d.theme || `Day ${i + 1}`,
+      theme: dayThemes[String(d.day || i + 1)] || d.theme || `Day ${i + 1}`,
       items,
       mapPoints,
     };
@@ -530,6 +581,9 @@ function adaptPlan(backendPlan, username) {
     tips,
     logs: backendPlan.history || [],
     username: username || "旅行者",
+    candidate_spots: backendPlan.candidate_spots || [],
+    hotel: backendPlan.hotel || "",
+    notes: backendPlan.notes || "",
   };
 }
 
@@ -542,5 +596,7 @@ Object.assign(window, {
   getConfig, ensureAMap, initAmapForDay, destroyAmap,
   optimizeDay, revertDay,
   searchPoi, saveTimeline,
+  searchNearby, savePlanMetadata,
+  drawNavPairRoute, restoreFullRoute,
   adaptPlan,
 });

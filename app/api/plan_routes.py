@@ -25,6 +25,7 @@ from app.providers.amap.poi import (
     ATTRACTION_TYPE,
     normalize_address,
     poi_to_spot,
+    search_around_pois,
     search_city_pois,
 )
 from pydantic import BaseModel
@@ -461,3 +462,110 @@ def save_timeline(
         raise HTTPException(status_code=500, detail="保存失败")
 
     return {"plan": plan}
+
+
+# ─── 周边搜索 ────────────────────────────────────────────────────
+
+
+@router.get("/api/poi/nearby")
+def poi_nearby(
+    lat: float,
+    lng: float,
+    type: str,
+    radius: int = 1500,
+    authorization: str | None = Header(default=None),
+):
+    """周边 POI 搜索，按距离排序。type=风景名胜|餐饮服务，radius 最大 5000m。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="需要登录")
+    if not decode_token(authorization[7:]):
+        raise HTTPException(status_code=401, detail="token 无效或已过期")
+
+    type = type.strip()
+    if type not in ("风景名胜", "餐饮服务"):
+        raise HTTPException(status_code=400, detail="type 须为 风景名胜 或 餐饮服务")
+    if not (1 <= radius <= 5000):
+        raise HTTPException(status_code=400, detail="radius 须在 1–5000 之间")
+
+    try:
+        raw_pois = search_around_pois(
+            {"lat": lat, "lng": lng},
+            amap_key(),
+            types=type,
+            radius=radius,
+            offset=20,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    results: list[dict] = []
+    for poi in raw_pois:
+        parsed = poi_to_spot(poi) if type == "风景名胜" else restaurant_to_dict(poi)
+        if not parsed:
+            continue
+        dist = poi.get("distance")
+        if dist is not None:
+            try:
+                parsed["distance"] = int(dist)
+            except (ValueError, TypeError):
+                pass
+        results.append(parsed)
+
+    results.sort(key=lambda x: x.get("distance", 999999))
+    return {"results": results}
+
+
+# ─── 行程元数据保存（hotel / notes / day_themes） ────────────────
+
+
+class MetadataRequest(BaseModel):
+    hotel: str | None = None
+    notes: str | None = None
+    day_themes: dict[str, str] | None = None
+
+
+@router.put("/api/plan/{plan_id}/metadata")
+def save_plan_metadata(
+    plan_id: str,
+    req: MetadataRequest,
+    authorization: str | None = Header(default=None),
+):
+    """保存 hotel / notes / day_themes（每天主题）到 final_plan JSON，不影响 timeline。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="需要登录")
+    user_id = decode_token(authorization[7:])
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token 无效或已过期")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM itineraries WHERE id=?", (plan_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="行程不存在")
+        if row["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="无权访问")
+        data = load_itinerary(plan_id, conn)
+
+    plan = data["plan"]
+    if req.hotel is not None:
+        plan["hotel"] = req.hotel
+    if req.notes is not None:
+        plan["notes"] = req.notes
+    if req.day_themes:
+        day_map = {d.get("day"): d for d in plan.get("days", [])}
+        for day_no_str, theme in req.day_themes.items():
+            try:
+                day_no = int(day_no_str)
+            except ValueError:
+                continue
+            day_obj = day_map.get(day_no)
+            if day_obj is not None:
+                day_obj["theme"] = theme
+
+    with get_conn() as conn:
+        ok = update_plan_json(plan_id, user_id, plan, conn)
+    if not ok:
+        raise HTTPException(status_code=500, detail="保存失败")
+
+    return {"ok": True}

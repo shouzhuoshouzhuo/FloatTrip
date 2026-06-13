@@ -98,8 +98,10 @@ def format_spots_for_llm(pois: list[dict[str, Any]]) -> str:
         loc = s["location"]
         rating = f"{s['rating']:.1f}" if s.get("rating") else "无"
         open_t = s.get("open_time") or "未知"
+        area = s.get("adname") or "未知"
         lines.append(
-            f"- {s['name']}（评分 {rating}，开放 {open_t}，坐标 {loc['lng']:.4f},{loc['lat']:.4f}）"
+            f"- {s['name']}（区域 {area}，评分 {rating}，开放 {open_t}，"
+            f"坐标 {loc['lng']:.4f},{loc['lat']:.4f}）"
         )
     return "\n".join(lines)
 
@@ -107,56 +109,6 @@ def format_spots_for_llm(pois: list[dict[str, Any]]) -> str:
 def spot_location_map(pois: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
     return {s["name"]: s["location"] for s in pois}
 
-
-# ─── Reviewer 预检工具 ────────────────────────────────────────
-
-def day_proximity_report(route: list[dict[str, Any]], pois: list[dict[str, Any]]) -> str:
-    """每天景点最大跨度 + 各天中心坐标 + 跨天中心间距，作为客观事实喂给 Reviewer。
-
-    跨天中心间距用于检测"多天行程覆盖同一地理区域"的问题：
-    若两天的游玩中心距 < 5km，说明 planner 未按地理方位分区，两天在同一区域反复横跳。
-    """
-    loc_map = spot_location_map(pois)
-    day_summaries: list[tuple] = []  # (day_no, names, span_km, center | None)
-
-    for day in route:
-        coords = [loc_map[s["name"]] for s in day.get("spots", []) if s["name"] in loc_map]
-        span = 0.0
-        if len(coords) >= 2:
-            span = max(
-                haversine_km(coords[i], coords[j])
-                for i in range(len(coords))
-                for j in range(i + 1, len(coords))
-            )
-        center: dict[str, float] | None = (
-            {"lat": sum(c["lat"] for c in coords) / len(coords),
-             "lng": sum(c["lng"] for c in coords) / len(coords)}
-            if coords else None
-        )
-        names = "、".join(s["name"] for s in day.get("spots", []))
-        day_summaries.append((day.get("day"), names, span, center))
-
-    lines = []
-    for day_no, names, span, center in day_summaries:
-        cstr = f"（中心 {center['lat']:.3f}N,{center['lng']:.3f}E）" if center else ""
-        lines.append(f"Day {day_no}：{names} —— 最大跨度 {span:.1f} km{cstr}")
-
-    # 跨天中心间距（行程 2 天及以上才有意义）
-    valid = [(d, c) for d, _, _, c in day_summaries if c]
-    if len(valid) >= 2:
-        lines.append("各天游玩中心间距：")
-        for i in range(len(valid)):
-            for j in range(i + 1, len(valid)):
-                di, ci = valid[i]
-                dj, cj = valid[j]
-                dist = haversine_km(ci, cj)
-                flag = (
-                    " ⚠️ 两天游玩区域高度重叠，建议按地理方位分区重新规划"
-                    if dist < 5 else ""
-                )
-                lines.append(f"  Day{di}↔Day{dj} 中心距离：{dist:.1f} km{flag}")
-
-    return "\n".join(lines)
 
 
 _TIME_RANGE_RE = re.compile(r"(\d{1,2})[:：](\d{2})\s*[-~—至]\s*(\d{1,2})[:：](\d{2})")
@@ -371,6 +323,15 @@ def restaurant_to_dict(poi: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(photos, list) and photos and isinstance(photos[0], dict):
         photo = str(photos[0].get("url", "")).strip() or None
 
+    open_time_r = (
+        str(biz_ext.get("opentime2", "")).strip()
+        or str(biz_ext.get("opentime", "")).strip()
+        or None
+    )
+    tel_r = str(poi.get("tel") or "").strip() or None
+    type_str = str(poi.get("type") or "")
+    category = (type_str.split(";")[-1].strip() if ";" in type_str else type_str.strip()) or None
+
     return {
         "name": str(poi.get("name", "")),
         "cost": cost_raw or None,
@@ -379,4 +340,7 @@ def restaurant_to_dict(poi: dict[str, Any]) -> dict[str, Any] | None:
         "location": location,
         "address": normalize_address(poi.get("address")),
         "photo": photo,
+        "open_time": open_time_r,
+        "tel": tel_r,
+        "category": category,
     }

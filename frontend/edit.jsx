@@ -114,17 +114,28 @@ function TimeRangeEditor({ start, end, onCommit }) {
 }
 
 /* ── 编辑态卡片 ─────────────────────────────────────── */
-function EditCard({ raw, dist, onReplace, onDelete, onTimeChange }) {
+function EditCard({ raw, onReplace, onDelete, onTimeChange, onDropCandidate }) {
   const isAttr = raw.type === "attraction";
   const mealLabel = isAttr ? null : raw.type === "lunch" ? "午餐" : "晚餐";
   return (
-    <div className="edit-card">
+    <div
+      className={`edit-card${isAttr ? "" : " is-meal"}${isAttr && onDropCandidate ? " drop-target" : ""}`}
+      onDragOver={isAttr && onDropCandidate ? (e) => { e.preventDefault(); e.currentTarget.classList.add("drag-over"); } : undefined}
+      onDragLeave={isAttr && onDropCandidate ? (e) => { e.currentTarget.classList.remove("drag-over"); } : undefined}
+      onDrop={isAttr && onDropCandidate ? (e) => {
+        e.preventDefault();
+        e.currentTarget.classList.remove("drag-over");
+        try {
+          const candidate = JSON.parse(e.dataTransfer.getData("application/json"));
+          if (candidate?.name) onDropCandidate(candidate);
+        } catch {}
+      } : undefined}
+    >
       <span className="drag-grip" title="拖拽调整顺序">⠿</span>
       <div className="edit-card-body">
         <div className="edit-card-title">
           <span>{raw.name || `${mealLabel || "条目"}（待安排）`}</span>
           {mealLabel && <span className="meal-flag">{mealLabel}</span>}
-          {dist != null && dist > 0 && <span className="edit-dist">↕ {dist} km</span>}
         </div>
         <div className="edit-card-meta">
           {isAttr && <TimeRangeEditor start={raw.start_time} end={raw.end_time} onCommit={onTimeChange} />}
@@ -144,7 +155,7 @@ function EditCard({ raw, dist, onReplace, onDelete, onTimeChange }) {
 /* ── 可拖拽时间轴 ───────────────────────────────────── */
 // ver：编辑版本号。每次 draft 变化 +1，靠 key 强制重挂载列表，
 // 保证 Sortable 动过的 DOM 与 React state 重新对齐（SortableJS×React 标准做法）。
-function EditableTimeline({ rawTimeline, ver, onReorder, onReplace, onDelete, onTimeChange, onAdd }) {
+function EditableTimeline({ rawTimeline, ver, onReorder, onReplace, onDelete, onTimeChange, onAdd, onDropCandidate }) {
   const listRef = React.useRef(null);
 
   React.useEffect(() => {
@@ -165,12 +176,29 @@ function EditableTimeline({ rawTimeline, ver, onReorder, onReplace, onDelete, on
   return (
     <div className="edit-timeline">
       <div ref={listRef} key={ver} className="edit-list">
-        {rawTimeline.map((raw, i) => (
-          <EditCard key={`${ver}-${i}`} raw={raw} dist={raw.dist_from_prev_km}
-            onReplace={() => onReplace(i)}
-            onDelete={() => onDelete(i)}
-            onTimeChange={(st, et) => onTimeChange(i, st, et)} />
-        ))}
+        {rawTimeline.map((raw, i) => {
+          // 通行标注随 applyEdit 重算的 dist_from_prev_km 实时更新；时间槽同理跟随 start_time
+          const note = i > 0 ? walkNote(raw.dist_from_prev_km) : null;
+          const isMeal = raw.type !== "attraction";
+          return (
+            <div key={`${ver}-${i}`} className="edit-row">
+              {note && (
+                <React.Fragment>
+                  <div></div>
+                  <div className="tl-spine"></div>
+                  <div className="tl-walk"><WalkIcon />{note}</div>
+                </React.Fragment>
+              )}
+              <div className="tl-when">{isMeal ? "" : (raw.start_time || "")}</div>
+              <div className="tl-spine tl-spine-dot"><span className={`tl-dot${isMeal ? " meal" : ""}`}></span></div>
+              <EditCard raw={raw}
+                onReplace={() => onReplace(i)}
+                onDelete={() => onDelete(i)}
+                onTimeChange={(st, et) => onTimeChange(i, st, et)}
+                onDropCandidate={raw.type === "attraction" && onDropCandidate ? (c) => onDropCandidate(i, c) : undefined} />
+            </div>
+          );
+        })}
       </div>
       {rawTimeline.length === 0 && <div className="edit-empty">这一天还没有安排，用下面的按钮添加吧</div>}
       <div className="edit-add-row">

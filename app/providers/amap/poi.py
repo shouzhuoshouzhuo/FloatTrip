@@ -185,10 +185,16 @@ def poi_to_spot(poi: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(photos, list) and photos and isinstance(photos[0], dict):
         first_photo = str(photos[0].get("url", "")).strip() or None
 
+    cost_raw = str(biz_ext.get("cost", "")).strip() if isinstance(biz_ext, dict) else ""
+
     return {
         "name": poi.get("name", ""),
         "rating": rating,
         "open_time": open_time,
         "location": location,
         "photo": first_photo,
+        "adname": str(poi.get("adname") or ""),
+        "address": normalize_address(poi.get("address", "")),
+        "tel": str(poi.get("tel") or "").strip() or None,
+        "cost": cost_raw or None,
     }
