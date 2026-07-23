@@ -1,0 +1,21 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+context: |
+  默认使用简体中文编写所有 OpenSpec 产物、说明和任务描述。
+  技术标识符、代码、命令、API 路径、字段名以及 OpenSpec 规范关键词
+  （如 SHALL、MUST、WHEN、THEN）可以保留英文，以确保格式兼容和含义准确。
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+rules:
+  proposal:
+    - 使用简体中文撰写提案正文
+  design:
+    - 使用简体中文撰写设计说明和决策记录
+  specs:
+    - 使用简体中文撰写需求与场景，同时保留模板要求的标题结构和规范关键词
+  tasks:
+    - 使用简体中文撰写实施任务和验收说明

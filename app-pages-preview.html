@@ -1,0 +1,985 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TripAgent App Pages Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #909bb2;
+      --shell: #e8edf0;
+      --card: #fbfbfa;
+      --card-soft: #eef2f4;
+      --ink: #181b24;
+      --muted: #68707d;
+      --line: rgba(24, 27, 36, .10);
+      --orange: #ef4d23;
+      --dark: #0b0f1a;
+      --blue: #6c9bc1;
+      --mint: #bed8cf;
+      --sand: #f1e5cf;
+      --shadow: 0 28px 80px rgba(26, 32, 44, .18);
+      --font: "Inter", ui-sans-serif, system-ui, sans-serif;
+      --serif: "Instrument Serif", Georgia, serif;
+      --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 28% 10%, rgba(255, 255, 255, .18), transparent 24%),
+        linear-gradient(135deg, #8c98b1 0%, #9ca7bb 44%, #7f8ba5 100%);
+      color: var(--ink);
+      font-family: var(--font);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+    a { color: inherit; text-decoration: none; }
+    .page {
+      width: min(1160px, calc(100% - 48px));
+      min-height: calc(100vh - 88px);
+      margin: 44px auto;
+      border-radius: 30px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.64), rgba(255,255,255,.18)),
+        var(--shell);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, .64);
+    }
+
+    .topbar {
+      height: 84px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 24px;
+      padding: 0 32px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      background: var(--orange);
+      position: relative;
+      box-shadow: 0 10px 22px rgba(239, 77, 35, .24);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+      background: #fff;
+    }
+
+    .brand-mark::before {
+      width: 12px;
+      height: 12px;
+      left: 8px;
+      top: 5px;
+    }
+
+    .brand-mark::after {
+      width: 7px;
+      height: 15px;
+      right: 6px;
+      bottom: 4px;
+      transform: rotate(18deg);
+    }
+
+    .nav {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      font-size: 13px;
+      color: #333844;
+      font-weight: 500;
+    }
+
+    .nav button {
+      border: 0;
+      padding: 7px 0;
+      color: inherit;
+      background: transparent;
+      border-bottom: 1.5px solid transparent;
+      white-space: nowrap;
+    }
+
+    .nav button.active {
+      color: var(--dark);
+      border-bottom-color: var(--dark);
+    }
+
+    .tools {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .search {
+      width: min(300px, 26vw);
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .58);
+      color: #7d8490;
+      font-size: 12px;
+    }
+
+    .icon-btn,
+    .avatar {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, .58);
+      color: var(--dark);
+    }
+
+    .avatar {
+      background: linear-gradient(135deg, #f0c1a7, #d7e3ec);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .content {
+      padding: 8px 32px 32px;
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 30px;
+      align-items: start;
+    }
+
+    .grid.three {
+      grid-template-columns: 1.15fr .85fr .85fr;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, .76);
+      border: 1px solid rgba(255, 255, 255, .66);
+      border-radius: 28px;
+      box-shadow: 0 18px 46px rgba(27, 35, 47, .08);
+    }
+
+    .card.pad { padding: 28px; }
+    .card.tight { padding: 20px; }
+
+    .hero-card {
+      min-height: 410px;
+      padding: 30px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-card::after {
+      content: "";
+      position: absolute;
+      width: 360px;
+      height: 360px;
+      border-radius: 50%;
+      right: -120px;
+      bottom: -140px;
+      background: radial-gradient(circle, rgba(239,77,35,.20), transparent 66%);
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--orange);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 620px;
+      margin-bottom: 12px;
+      font-size: clamp(42px, 5vw, 72px);
+      line-height: .96;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+
+    .serif {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 400;
+    }
+
+    h2 {
+      margin-bottom: 12px;
+      font-size: 30px;
+      line-height: 1.05;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 18px;
+      line-height: 1.25;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .primary-btn,
+    .soft-btn {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 18px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .primary-btn {
+      background: var(--dark);
+      color: #fff;
+    }
+
+    .soft-btn {
+      background: rgba(255, 255, 255, .70);
+      color: var(--dark);
+      border: 1px solid rgba(24,27,36,.08);
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 24px;
+    }
+
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 32px;
+      max-width: 560px;
+    }
+
+    .stat {
+      border-radius: 20px;
+      padding: 16px;
+      background: rgba(255, 255, 255, .62);
+      border: 1px solid rgba(24,27,36,.06);
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .stat span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    .mini-link {
+      color: #555b66;
+      font-size: 12px;
+      text-decoration: underline;
+      white-space: nowrap;
+    }
+
+    .trip-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .trip-item {
+      display: grid;
+      grid-template-columns: 44px 1fr auto;
+      gap: 14px;
+      align-items: center;
+      padding: 14px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, .46);
+      border: 1px solid rgba(24,27,36,.06);
+    }
+
+    .trip-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 13px;
+      display: grid;
+      place-items: center;
+      background: var(--orange);
+      color: #fff;
+    }
+
+    .trip-icon.blue { background: var(--blue); }
+    .trip-icon.dark { background: var(--dark); }
+    .trip-icon.mint { background: #6b9d8a; }
+
+    .trip-title {
+      margin: 0;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .trip-sub {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: rgba(255, 255, 255, .62);
+      color: #454b56;
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .pill.dark {
+      background: var(--dark);
+      color: #fff;
+    }
+
+    .prompt-box {
+      min-height: 184px;
+      width: 100%;
+      resize: vertical;
+      border: 0;
+      outline: none;
+      border-radius: 24px;
+      padding: 22px;
+      background: rgba(255, 255, 255, .72);
+      color: var(--ink);
+      box-shadow: inset 0 0 0 1px rgba(24,27,36,.08);
+      font-size: 18px;
+      line-height: 1.55;
+    }
+
+    .prompt-box::placeholder { color: #878d97; }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .chip {
+      border: 0;
+      border-radius: 999px;
+      padding: 9px 13px;
+      background: rgba(255, 255, 255, .66);
+      color: #303642;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .pipeline {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .pipe-step {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.56);
+    }
+
+    .pipe-step strong {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--dark);
+      color: #fff;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .route-map {
+      min-height: 328px;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.46) 1px, transparent 1px) 0 0 / 42px 42px,
+        linear-gradient(0deg, rgba(255,255,255,.46) 1px, transparent 1px) 0 0 / 42px 42px,
+        linear-gradient(135deg, #d8e3df, #eef0e8);
+    }
+
+    .route-map::before {
+      content: "";
+      position: absolute;
+      left: 10%;
+      right: 8%;
+      top: 28%;
+      height: 42%;
+      border: 3px dashed rgba(239,77,35,.62);
+      border-left-color: transparent;
+      border-bottom-color: transparent;
+      border-radius: 50%;
+      transform: rotate(-10deg);
+    }
+
+    .pin {
+      position: absolute;
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--orange);
+      color: #fff;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 12px 28px rgba(239,77,35,.28);
+    }
+
+    .pin.one { left: 16%; top: 60%; }
+    .pin.two { left: 42%; top: 32%; background: var(--dark); }
+    .pin.three { right: 20%; top: 52%; background: var(--blue); }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+    }
+
+    .time-row {
+      display: grid;
+      grid-template-columns: 72px 1fr auto;
+      gap: 14px;
+      align-items: start;
+      padding: 14px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.56);
+      border: 1px solid rgba(24,27,36,.06);
+    }
+
+    .time {
+      color: var(--orange);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .history-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .history-card {
+      min-height: 230px;
+      padding: 20px;
+      border-radius: 26px;
+      background: rgba(255,255,255,.72);
+      border: 1px solid rgba(255,255,255,.66);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .cover {
+      height: 86px;
+      border-radius: 20px;
+      margin-bottom: 18px;
+      background:
+        radial-gradient(circle at 30% 30%, rgba(255,255,255,.82), transparent 28%),
+        linear-gradient(135deg, #ef4d23, #f0c88a);
+    }
+
+    .cover.blue { background: linear-gradient(135deg, #6c9bc1, #bed8cf); }
+    .cover.dark { background: linear-gradient(135deg, #0b0f1a, #8c98b1); }
+
+    .profile-grid {
+      display: grid;
+      grid-template-columns: .85fr 1.15fr;
+      gap: 20px;
+    }
+
+    .profile-hero {
+      min-height: 420px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      justify-content: center;
+    }
+
+    .profile-avatar {
+      width: 112px;
+      height: 112px;
+      border-radius: 38px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #ef4d23, #f1c27a);
+      color: #fff;
+      font-family: var(--serif);
+      font-size: 56px;
+      margin-bottom: 22px;
+    }
+
+    .pref-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .pref-card {
+      min-height: 168px;
+      padding: 18px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.58);
+      border: 1px solid rgba(24,27,36,.06);
+    }
+
+    .tag-cloud {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .progress-lines {
+      display: grid;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .progress label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 7px;
+      color: #4c5360;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .bar {
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(24,27,36,.10);
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--orange);
+    }
+
+    @media (max-width: 1000px) {
+      .page {
+        width: min(100% - 28px, 1160px);
+        margin: 24px auto;
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+        height: auto;
+        gap: 16px;
+        padding: 24px;
+      }
+
+      .nav {
+        justify-content: flex-start;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+
+      .tools {
+        justify-content: space-between;
+      }
+
+      .search {
+        flex: 1;
+        width: auto;
+      }
+
+      .grid,
+      .grid.three,
+      .profile-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .history-grid,
+      .pref-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        width: min(100% - 18px, 1160px);
+        margin: 9px auto;
+        border-radius: 24px;
+      }
+
+      .content {
+        padding: 4px 16px 20px;
+      }
+
+      .topbar {
+        padding: 18px 16px;
+      }
+
+      .brand {
+        justify-content: space-between;
+      }
+
+      .search {
+        width: 100%;
+        order: 2;
+        flex: 0 0 100%;
+      }
+
+      .tools {
+        flex-wrap: wrap;
+      }
+
+      .icon-btn,
+      .avatar {
+        width: 36px;
+        height: 36px;
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+
+      .card.pad,
+      .hero-card {
+        padding: 22px;
+        border-radius: 24px;
+      }
+
+      .stat-row,
+      .history-grid,
+      .pref-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .trip-item,
+      .time-row {
+        grid-template-columns: 40px 1fr;
+      }
+
+      .trip-item > .pill,
+      .time-row > .pill {
+        grid-column: 2;
+        width: max-content;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <a class="brand" href="#" data-view-link="home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>TRIPAGENT</span>
+      </a>
+
+      <nav class="nav" aria-label="Main navigation">
+        <button class="active" data-view-link="home">Home</button>
+        <button data-view-link="start">Start Journey</button>
+        <button data-view-link="details">Itinerary Details</button>
+        <button data-view-link="history">Trip History</button>
+        <button data-view-link="profile">My Profile</button>
+      </nav>
+
+      <div class="tools">
+        <div class="search"><i data-lucide="search" size="15"></i><span>Search trips, cities, meals...</span></div>
+        <button class="icon-btn" aria-label="Settings"><i data-lucide="settings" size="15"></i></button>
+        <button class="icon-btn" aria-label="Notifications"><i data-lucide="bell" size="15"></i></button>
+        <div class="avatar">CH</div>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="view active" id="view-home">
+        <div class="grid">
+          <article class="card hero-card">
+            <p class="eyebrow">Travel command center</p>
+            <h1>Plan smarter <span class="serif">city days</span> from one sentence.</h1>
+            <p class="muted" style="max-width: 560px;">TripAgent turns natural language into real POIs, reviewed timing, nearby meals, and editable routes. Your next trip starts as a sentence and ends as a map-ready itinerary.</p>
+            <div class="actions">
+              <button class="primary-btn" data-view-link="start">Start Journey <i data-lucide="arrow-right" size="16"></i></button>
+              <button class="soft-btn" data-view-link="details">Open sample route</button>
+            </div>
+            <div class="stat-row">
+              <div class="stat"><strong>92%</strong><span>Route readiness</span></div>
+              <div class="stat"><strong>0</strong><span>Invented places</span></div>
+              <div class="stat"><strong>3</strong><span>Agent checks</span></div>
+            </div>
+          </article>
+
+          <aside class="stack">
+            <div class="section-head">
+              <h3>Your Recent Journeys</h3>
+              <a class="mini-link" href="#" data-view-link="history">See all trips</a>
+            </div>
+            <div class="trip-list">
+              <article class="trip-item">
+                <div class="trip-icon"><i data-lucide="map" size="19"></i></div>
+                <div><p class="trip-title">Chengdu Weekend Tea Route</p><p class="trip-sub">3 days · food-first · rainy backup</p></div>
+                <span class="pill dark">Ready</span>
+              </article>
+              <article class="trip-item">
+                <div class="trip-icon blue"><i data-lucide="landmark" size="19"></i></div>
+                <div><p class="trip-title">Hangzhou Slow Walk</p><p class="trip-sub">1 day · lake route · low walking</p></div>
+                <span class="pill">Draft</span>
+              </article>
+              <article class="trip-item">
+                <div class="trip-icon mint"><i data-lucide="cloud-sun" size="19"></i></div>
+                <div><p class="trip-title">Beijing Museum Days</p><p class="trip-sub">4 days · indoor optimized</p></div>
+                <span class="pill">Edited</span>
+              </article>
+            </div>
+          </aside>
+        </div>
+
+        <div class="grid three" style="margin-top: 20px;">
+          <article class="card tight">
+            <h3>Agent Pipeline</h3>
+            <p class="muted">Intent, POI search, planner, reviewer, time check, meals, finalize.</p>
+          </article>
+          <article class="card tight">
+            <h3>Weather Watch</h3>
+            <p class="muted">Rain detected tomorrow. Indoor alternatives are prioritized.</p>
+          </article>
+          <article class="card tight">
+            <h3>Profile Memory</h3>
+            <p class="muted">Food and pace preferences are ready for the next route.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="view-start">
+        <div class="grid">
+          <article class="card pad">
+            <p class="eyebrow">Start Journey</p>
+            <h2>Tell TripAgent what kind of day you want.</h2>
+            <textarea class="prompt-box" placeholder="Example: Plan a relaxed 3-day Chengdu trip this weekend. I want teahouses, local food, and not too much walking."></textarea>
+            <div class="chip-row">
+              <button class="chip">Rain-friendly</button>
+              <button class="chip">Local food</button>
+              <button class="chip">Low walking</button>
+              <button class="chip">Museums</button>
+              <button class="chip">Family trip</button>
+            </div>
+            <div class="actions">
+              <button class="primary-btn">Generate itinerary <i data-lucide="sparkles" size="16"></i></button>
+              <button class="soft-btn">Use my profile</button>
+            </div>
+          </article>
+
+          <aside class="card pad">
+            <p class="eyebrow">Planning Flow</p>
+            <h3>What happens after you submit</h3>
+            <div class="pipeline">
+              <div class="pipe-step"><strong>01</strong><div><p class="trip-title">Understand trip intent</p><p class="trip-sub">Destination, dates, days, pace, constraints.</p></div></div>
+              <div class="pipe-step"><strong>02</strong><div><p class="trip-title">Search real POIs</p><p class="trip-sub">Attractions, weather, nearby restaurants.</p></div></div>
+              <div class="pipe-step"><strong>03</strong><div><p class="trip-title">Review and time-check</p><p class="trip-sub">Route quality, opening hours, daily flow.</p></div></div>
+              <div class="pipe-step"><strong>04</strong><div><p class="trip-title">Finalize editable route</p><p class="trip-sub">Timeline, map, meals, distance, tips.</p></div></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-details">
+        <div class="grid">
+          <article class="card route-map">
+            <span class="pin one">1</span>
+            <span class="pin two">2</span>
+            <span class="pin three">3</span>
+          </article>
+
+          <aside class="card pad">
+            <div class="section-head">
+              <div><p class="eyebrow">Itinerary Details</p><h3>Chengdu Weekend Route</h3></div>
+              <span class="pill dark">92% Ready</span>
+            </div>
+            <div class="timeline">
+              <article class="time-row">
+                <span class="time">09:30</span>
+                <div><p class="trip-title">People's Park Tea House</p><p class="trip-sub">Slow morning, low walking, local tea culture.</p></div>
+                <span class="pill">1.2 km</span>
+              </article>
+              <article class="time-row">
+                <span class="time">12:20</span>
+                <div><p class="trip-title">Kuixinglou Street Lunch</p><p class="trip-sub">Nearby restaurants ranked by rating and route fit.</p></div>
+                <span class="pill">meal</span>
+              </article>
+              <article class="time-row">
+                <span class="time">14:10</span>
+                <div><p class="trip-title">Sichuan Museum</p><p class="trip-sub">Indoor backup selected for afternoon rain.</p></div>
+                <span class="pill">open</span>
+              </article>
+              <article class="time-row">
+                <span class="time">18:30</span>
+                <div><p class="trip-title">Hotpot near Wide Alley</p><p class="trip-sub">Dinner stop matched to food preferences.</p></div>
+                <span class="pill">edit</span>
+              </article>
+            </div>
+            <div class="actions">
+              <button class="primary-btn">Optimize route</button>
+              <button class="soft-btn">Edit timeline</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-history">
+        <div class="section-head">
+          <div><p class="eyebrow">Trip History</p><h2>Every route you have planned.</h2></div>
+          <button class="primary-btn" data-view-link="start">New trip</button>
+        </div>
+        <div class="history-grid">
+          <article class="history-card">
+            <div><div class="cover"></div><h3>Shanghai 3-Day Design Walk</h3><p class="muted">Saved yesterday · 18 stops · 5 meals</p></div>
+            <div class="chip-row"><span class="pill dark">Ready</span><span class="pill">edited</span></div>
+          </article>
+          <article class="history-card">
+            <div><div class="cover blue"></div><h3>Nanjing History Route</h3><p class="muted">Saved Jun 11 · 12 stops · rainy backup</p></div>
+            <div class="chip-row"><span class="pill">Draft</span><span class="pill">reviewed</span></div>
+          </article>
+          <article class="history-card">
+            <div><div class="cover dark"></div><h3>Hangzhou Slow Lake Day</h3><p class="muted">Saved Jun 09 · 6 stops · low walking</p></div>
+            <div class="chip-row"><span class="pill">Archived</span><span class="pill">profile-led</span></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="view-profile">
+        <div class="profile-grid">
+          <article class="card profile-hero pad">
+            <div class="profile-avatar">C</div>
+            <p class="eyebrow">My Profile</p>
+            <h2>Travel memory that improves each itinerary.</h2>
+            <p class="muted">TripAgent uses your preferences to rewrite vague requests into sharper plans without overriding the current trip.</p>
+          </article>
+
+          <div class="stack">
+            <div class="pref-grid">
+              <article class="pref-card">
+                <h3>Attraction Style</h3>
+                <div class="tag-cloud"><span class="pill">Museums</span><span class="pill">Tea houses</span><span class="pill">Old streets</span><span class="pill">Low walking</span></div>
+              </article>
+              <article class="pref-card">
+                <h3>Food Preferences</h3>
+                <div class="tag-cloud"><span class="pill">Local food</span><span class="pill">Hotpot</span><span class="pill">No long detours</span><span class="pill">High ratings</span></div>
+              </article>
+            </div>
+            <article class="card pad">
+              <h3>Planning Personality</h3>
+              <div class="progress-lines">
+                <div class="progress"><label><span>Relaxed pace</span><span>82%</span></label><div class="bar"><span style="width: 82%"></span></div></div>
+                <div class="progress"><label><span>Food discovery</span><span>74%</span></label><div class="bar"><span style="width: 74%; background: #6c9bc1"></span></div></div>
+                <div class="progress"><label><span>Indoor backup</span><span>68%</span></label><div class="bar"><span style="width: 68%; background: #6b9d8a"></span></div></div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script>
+    const links = Array.from(document.querySelectorAll("[data-view-link]"));
+    const views = Array.from(document.querySelectorAll(".view"));
+    const navButtons = Array.from(document.querySelectorAll(".nav button"));
+
+    function showView(name) {
+      views.forEach((view) => view.classList.toggle("active", view.id === `view-${name}`));
+      navButtons.forEach((button) => button.classList.toggle("active", button.dataset.viewLink === name));
+      window.location.hash = name === "home" ? "" : name;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    links.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        const name = link.dataset.viewLink;
+        if (!name) return;
+        event.preventDefault();
+        showView(name);
+      });
+    });
+
+    const initial = window.location.hash.replace("#", "");
+    if (["home", "start", "details", "history", "profile"].includes(initial)) {
+      showView(initial);
+    }
+
+    window.lucide?.createIcons();
+  </script>
+</body>
+</html>

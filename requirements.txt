@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic>=2.0
 langgraph>=1.2
+langgraph-checkpoint-sqlite>=3.0
 langchain-openai
 httpx
 PyJWT>=2.0

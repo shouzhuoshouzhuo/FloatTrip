@@ -5,11 +5,12 @@
 """
 from __future__ import annotations
 
+import asyncio
 import urllib.parse
 from typing import Any
 
 from app.core.cache import get_cached, set_cached, weather_cache_key, WEATHER_TTL
-from app.core.http import http_get_json
+from app.core.http import http_get_json, http_get_json_async
 
 AMAP_WEATHER_URL = "https://restapi.amap.com/v3/weather/weatherInfo"
 BAD_WEATHER_KEYWORDS = {"雨", "雪", "冰雹", "雾", "沙尘暴", "霾"}
@@ -81,4 +82,46 @@ def fetch_forecast(city: str, api_key: str) -> list[dict[str, Any]]:
     # 写入缓存
     if result:
         set_cached(cache_key, result, WEATHER_TTL)
+    return result
+
+
+async def fetch_forecast_async(city: str, api_key: str) -> list[dict[str, Any]]:
+    cache_key = weather_cache_key(city)
+    cached = await asyncio.to_thread(get_cached, cache_key)
+    if cached is not None:
+        return cached
+    params = {
+        "key": api_key,
+        "city": city,
+        "extensions": "all",
+        "output": "json",
+    }
+    url = f"{AMAP_WEATHER_URL}?{urllib.parse.urlencode(params)}"
+    try:
+        data = await http_get_json_async(url)
+    except Exception:
+        return []
+    if data.get("status") != "1":
+        return []
+    forecasts = data.get("forecasts") or []
+    if not forecasts or not isinstance(forecasts, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for cast in forecasts[0].get("casts") or []:
+        day_weather = str(cast.get("dayweather", "")).strip()
+        night_weather = str(cast.get("nightweather", "")).strip()
+        if not cast.get("date"):
+            continue
+        result.append(
+            {
+                "date": str(cast["date"]),
+                "day_weather": day_weather,
+                "night_weather": night_weather,
+                "day_temp": str(cast.get("daytemp", "")).strip(),
+                "night_temp": str(cast.get("nighttemp", "")).strip(),
+                "is_bad": _is_bad(day_weather) or _is_bad(night_weather),
+            }
+        )
+    if result:
+        await asyncio.to_thread(set_cached, cache_key, result, WEATHER_TTL)
     return result

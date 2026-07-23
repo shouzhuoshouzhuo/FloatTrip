@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
 import urllib.parse
 import urllib.request
 from typing import Any
+
+import httpx
+
+from app.core.async_resources import provider_slot
 
 
 USER_AGENT = (
@@ -57,4 +62,52 @@ def http_get_json(url: str, timeout: int = 15) -> dict[str, Any]:
         except Exception as exc:
             last_error = exc
             time.sleep(0.8 * (attempt + 1))
+    raise RuntimeError(f"请求失败：{redact_url(url)}；原因：{last_error}")
+
+
+_async_client: httpx.AsyncClient | None = None
+_async_client_lock = asyncio.Lock()
+
+
+async def get_async_http_client() -> httpx.AsyncClient:
+    global _async_client
+    if _async_client is None:
+        async with _async_client_lock:
+            if _async_client is None:
+                _async_client = httpx.AsyncClient(
+                    proxy=choose_http_proxy(),
+                    trust_env=False,
+                    timeout=15,
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept": "application/json,*/*;q=0.8",
+                        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
+                    },
+                )
+    return _async_client
+
+
+async def close_async_http_client() -> None:
+    global _async_client
+    if _async_client is not None:
+        await _async_client.aclose()
+        _async_client = None
+
+
+async def http_get_json_async(url: str, timeout: int = 15) -> dict[str, Any]:
+    client = await get_async_http_client()
+    last_error: Exception | None = None
+    async with provider_slot("amap"):
+        for attempt in range(3):
+            try:
+                response = await client.get(url, timeout=timeout)
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise ValueError("response is not a JSON object")
+                return data
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt < 2:
+                    await asyncio.sleep(0.8 * (attempt + 1))
     raise RuntimeError(f"请求失败：{redact_url(url)}；原因：{last_error}")

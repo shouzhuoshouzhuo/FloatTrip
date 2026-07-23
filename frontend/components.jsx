@@ -5,13 +5,13 @@
 // planner⇄reviewer / planner⇄time_check 多轮循环时小人只前进不后退，
 // 轮次细节由实时文案（stage label）展示。
 const JOURNEY_STEPS = [
-  { key: "intent",            label: "理解出行意图",       detail: "目的地 / 日期 / 偏好 · 查询天气预报" },
-  { key: "query_rewrite",     label: "结合画像优化查询",   detail: "个性化改写中" },
-  { key: "attraction_search", label: "景点 Agent 检索",    detail: "搜索景点池" },
-  { key: "plan_review",       label: "规划 ⇄ 评审行程",    detail: "多轮打磨逐日时刻表" },
-  { key: "time_check",        label: "核查开放时间",        detail: "逐景点核对营业时段" },
-  { key: "meal",              label: "推荐沿线餐厅",        detail: "搜店 · 逐天挑选" },
-  { key: "finalize",          label: "生成最终行程",         detail: "即将完成…" },
+  { key: "intent",            label: "理解出行意图",       detail: "目的地 / 日期 / 偏好 · 查询天气预报", doneDetail: "需求与天气已确认" },
+  { key: "query_rewrite",     label: "结合画像优化查询",   detail: "正在匹配个人偏好", doneDetail: "个人偏好已融合" },
+  { key: "attraction_search", label: "景点 Agent 检索",    detail: "正在搜索真实景点", doneDetail: "候选景点已备好" },
+  { key: "plan_review",       label: "规划 ⇄ 评审行程",    detail: "多轮打磨逐日时刻表", doneDetail: "逐日路线已通过评审" },
+  { key: "time_check",        label: "核查开放时间",        detail: "逐景点核对营业时段", doneDetail: "开放时间已核对" },
+  { key: "meal",              label: "推荐沿线餐厅",        detail: "搜店 · 逐天挑选", doneDetail: "沿线餐饮已补齐" },
+  { key: "finalize",          label: "生成最终行程",         detail: "正在整理最终版本", doneDetail: "完整行程已生成" },
 ];
 // 后端节点名 → 旅程站点 key
 const NODE_TO_STEP = {
@@ -270,8 +270,27 @@ function WalkIcon() {
   );
 }
 
+function formatPoiCost(value) {
+  if (value == null || value === "") return "";
+  if (Array.isArray(value)) {
+    if (!value.length) return "票价未提供";
+    value = value[0];
+  }
+  const raw = String(value).trim();
+  if (!raw) return "";
+  if (["[]", "null", "none", "未知", "暂无"].includes(raw.toLowerCase())) {
+    return "票价未提供";
+  }
+  if (/^免费$/i.test(raw)) return "免费";
+  if (/^0+(?:\.0+)?$/.test(raw)) return "免费";
+  if (/^\d+(?:\.\d+)?$/.test(raw)) return `¥${raw}/人`;
+  if (/[元¥￥]/.test(raw)) return raw;
+  return "票价未提供";
+}
+
 function AttractionCard({ item, onNearby }) {
   const p = PERIOD[item.period] || PERIOD.morning;
+  const costLabel = formatPoiCost(item.cost);
   return (
     <div className="tl-node">
       <div className="t-card">
@@ -284,7 +303,7 @@ function AttractionCard({ item, onNearby }) {
           <div className="t-meta">
             {item.start && <span>{item.start}{item.end ? ` – ${item.end}` : ""}</span>}
             {item.rating != null && <span className="star">★ {Number(item.rating).toFixed(1)}</span>}
-            {item.cost && <span>💰 ¥{item.cost}/人</span>}
+            {costLabel && <span>💰 {costLabel}</span>}
             {item.open && <span className="t-open">开放 {item.open}</span>}
           </div>
           {item.address && <div className="t-address">📍 {item.address}</div>}
@@ -301,6 +320,7 @@ function AttractionCard({ item, onNearby }) {
 
 function MealCard({ item }) {
   const label = item.type === "lunch" ? "午餐" : "晚餐";
+  const costLabel = formatPoiCost(item.cost);
   if (item.no_restaurant) {
     return (
       <div className="tl-node is-meal">
@@ -324,7 +344,7 @@ function MealCard({ item }) {
           </div>
           <div className="t-meta">
             {item.rating != null && <span className="star">★ {Number(item.rating).toFixed(1)}</span>}
-            {item.cost && <span>¥{item.cost} /人</span>}
+            {costLabel && <span>{costLabel}</span>}
             {item.category && <span>{item.category}</span>}
             {item.addr && <span>{item.addr}</span>}
           </div>
@@ -454,10 +474,10 @@ function RecommendStrip({ candidates, editing }) {
                 <span>{detail.open_time}</span>
               </div>
             )}
-            {detail.cost && (
+            {formatPoiCost(detail.cost) && (
               <div className="rec-detail-row">
                 <span className="rec-detail-icon">💰</span>
-                <span>¥{detail.cost}/人</span>
+                <span>{formatPoiCost(detail.cost)}</span>
               </div>
             )}
           </div>

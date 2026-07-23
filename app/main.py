@@ -46,6 +46,11 @@ from app.api.history_routes import router as history_router
 from app.api.profile_routes import router as profile_router
 from app.api.plan_routes import router as plan_router
 from app.api.sweep_routes import router as sweep_router
+from app.api.runtime_routes import router as runtime_router
+from app.runtime.container import start_runtime, stop_runtime
+from app.runtime.container import manager as runtime_manager
+from app.runtime.container import scheduler as runtime_scheduler
+from app.runtime.compat import create_legacy_run, legacy_events, resume_legacy_run
 
 load_local_env()
 init_db()
@@ -59,6 +64,17 @@ app.include_router(history_router)
 app.include_router(profile_router)
 app.include_router(plan_router)
 app.include_router(sweep_router)
+app.include_router(runtime_router)
+
+
+@app.on_event("startup")
+async def start_agent_runtime():
+    await start_runtime()
+
+
+@app.on_event("shutdown")
+async def stop_agent_runtime():
+    await stop_runtime()
 
 app.add_middleware(
     CORSMiddleware,
@@ -123,6 +139,51 @@ async def create_plan_stream(req: PlanRequest, request: Request):
     """
     user_id = _get_required_user_id(request)
 
+    overrides = dict(
+        max_per_day=req.max_per_day,
+        min_rating=req.min_rating,
+        max_spots=req.max_spots,
+        max_review_rounds=req.max_review_rounds,
+    )
+
+    try:
+        if req.thread_id:
+            run = await resume_legacy_run(
+                runtime_manager,
+                runtime_scheduler,
+                user_id=user_id,
+                run_id=req.thread_id,
+                value=req.query,
+            )
+        else:
+            run = await asyncio.to_thread(
+                create_legacy_run,
+                runtime_manager,
+                user_id=user_id,
+                query=req.query,
+                overrides=overrides,
+                plan_id=req.plan_id,
+                modification_notes=req.modification_notes,
+            )
+            runtime_scheduler.notify()
+
+        async def runtime_compat_stream():
+            async for event in legacy_events(runtime_manager, run["id"]):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            runtime_compat_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+    except (ValueError, LookupError):
+        # Compatibility fallback for pre-Runtime thread/pending records.
+        pass
+
     # ── 1. 多轮续接：合并原始 query ──────────────────────────
     if req.thread_id:
         original = thread_store.get(req.thread_id)
@@ -136,13 +197,6 @@ async def create_plan_stream(req: PlanRequest, request: Request):
 
     # ── 2. 基础 overrides ────────────────────────────────────
     parent_plan_id = req.plan_id
-    overrides = dict(
-        max_per_day=req.max_per_day,
-        min_rating=req.min_rating,
-        max_spots=req.max_spots,
-        max_review_rounds=req.max_review_rounds,
-    )
-
     # ── 3. memory_writer closure（供 finalize 节点写入） ──────
     saved_plan_id: list[str] = []  # 用列表传引用
 

@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import re
+import asyncio
 import time
 from datetime import date, timedelta
 from typing import Any
@@ -13,10 +14,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from app.core.env import load_local_env
+from app.core.async_resources import provider_slot
 from app.providers.amap.poi import (
     parse_location,
     normalize_address,
     search_attraction_pois,
+    search_attraction_pois_async,
     poi_to_spot,
 )
 
@@ -154,6 +157,32 @@ def fetch_city_spots(city: str, api_key: str, *, max_spots: int = 30) -> list[di
         for raw in search_attraction_pois(city, api_key, keywords=kw):
             if len(spots) >= max_spots:
                 break
+            name = raw.get("name", "")
+            if name in seen:
+                continue
+            spot = poi_to_spot(raw)
+            if spot:
+                seen.add(name)
+                spots.append(spot)
+    return spots
+
+
+async def fetch_city_spots_async(
+    city: str, api_key: str, *, max_spots: int = 30
+) -> list[dict[str, Any]]:
+    keywords_list = [f"{city}必去景点", f"{city}热门景区", f"{city}博物馆"]
+    pages = await asyncio.gather(
+        *(
+            search_attraction_pois_async(city, api_key, keywords=keyword)
+            for keyword in keywords_list
+        )
+    )
+    seen: set[str] = set()
+    spots: list[dict[str, Any]] = []
+    for raw_items in pages:
+        for raw in raw_items:
+            if len(spots) >= max_spots:
+                return spots
             name = raw.get("name", "")
             if name in seen:
                 continue
@@ -343,6 +372,37 @@ def invoke_structured(llm: Any, messages: list[tuple[str, str]], *, retries: int
     raise RuntimeError(f"结构化输出连续 {retries} 次返回 None，模型未产出有效结果")
 
 
+async def ainvoke_structured(
+    llm: Any,
+    messages: list[tuple[str, str]],
+    *,
+    retries: int = 3,
+) -> Any:
+    """异步结构化 LLM 调用，保持与同步版本相同的 None 重试语义。"""
+    total_chars = sum(len(role) + len(content) for role, content in messages)
+    for attempt in range(retries):
+        started = time.perf_counter()
+        async with provider_slot("llm"):
+            result = await llm.ainvoke(messages)
+        elapsed = time.perf_counter() - started
+        if result is not None:
+            logger.debug(
+                "[ainvoke_structured] attempt=%d elapsed=%.2fs chars=%d",
+                attempt + 1,
+                elapsed,
+                total_chars,
+            )
+            return result
+        logger.warning(
+            "[ainvoke_structured] attempt=%d returned None elapsed=%.2fs",
+            attempt + 1,
+            elapsed,
+        )
+        if attempt + 1 < retries:
+            await asyncio.sleep(0.25 * (attempt + 1))
+    raise RuntimeError(f"结构化输出连续 {retries} 次返回 None，模型未产出有效结果")
+
+
 # ─── 餐厅 POI 解析 ────────────────────────────────────────────
 
 # ─── 天气工具 ─────────────────────────────────────────────────
@@ -394,6 +454,34 @@ def fetch_weather_for_dates(
             "建议出行前关注天气预报"
         )
 
+    return matched, note
+
+
+async def fetch_weather_for_dates_async(
+    destination: str,
+    start_date: date,
+    end_date: date,
+    api_key: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    from app.providers.weather.amap import fetch_forecast_async
+
+    try:
+        all_forecasts = await fetch_forecast_async(destination, api_key)
+    except Exception:
+        all_forecasts = []
+    if not all_forecasts:
+        return [], "天气信息获取失败，按晴天规划路线"
+    forecast_map = {item["date"]: item for item in all_forecasts}
+    travel_dates = []
+    current = start_date
+    while current <= end_date:
+        travel_dates.append(current.isoformat())
+        current += timedelta(days=1)
+    matched = [forecast_map[item] for item in travel_dates if item in forecast_map]
+    missing = [item for item in travel_dates if item not in forecast_map]
+    if not matched:
+        return [], "旅游日期超出天气预报范围（高德预报约 4 天内），建议出行前关注天气预报"
+    note = f"部分日期（{', '.join(missing)}）超出天气预报范围" if missing else None
     return matched, note
 
 

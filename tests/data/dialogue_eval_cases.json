@@ -1,0 +1,10 @@
+[
+  {"name":"明天南京3日游","message":"明天南京3日游","intent":"create_plan","patch":{"destination":"南京","start_date":"2026-07-24","end_date":"2026-07-26","days":3}},
+  {"name":"省略介词","message":"南京明天三天","intent":"create_plan","patch":{"destination":"南京","days":3}},
+  {"name":"口语日期","message":"国庆前一天去泉州，玩四天","intent":"create_plan","patch":{"destination":"泉州","days":4}},
+  {"name":"多轮补充","message":"预算三千，吃清淡一点","intent":"update_brief","patch":{"budget":"3000元左右","food_preference":"清淡"}},
+  {"name":"纠正目的地","message":"不去南京了，改成都","intent":"update_brief","patch":{"destination":"成都"}},
+  {"name":"旅行咨询","message":"十月适合去云南吗？","intent":"travel_qa","patch":{}},
+  {"name":"行程修改","message":"第三天下午留给休息","intent":"modify_itinerary","patch":{}},
+  {"name":"任务控制","message":"把正在规划的那个停掉","intent":"run_control","patch":{}}
+]
