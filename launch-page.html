@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>途见 - AI 旅行规划</title>
+  <meta name="description" content="途见把复杂的旅行决策变成一份真正可执行、可编辑、可落地的 AI 行程计划。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Noto+Serif+SC:wght@700;900&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f4eee0;
+      --bg-deep: #ece4d0;
+      --card: #fdfaf2;
+      --card-2: #f8f3e6;
+      --ink: #28231a;
+      --ink-2: #54493d;
+      --ink-3: #8a7d6c;
+      --ink-4: #b3a692;
+      --line: #ddd2bc;
+      --line-2: #e8dfcc;
+      --accent: #b5491f;
+      --accent-deep: #8f3815;
+      --accent-soft: #f3ddd2;
+      --accent-ink: #fdfaf2;
+      --second: #3f5d3a;
+      --second-soft: #e2e8d9;
+      --gold: #c08a2d;
+      --shadow: 0 12px 32px rgba(60, 46, 24, .12), 0 28px 64px rgba(60, 46, 24, .12);
+      --font-display: "Noto Serif SC", "Songti SC", serif;
+      --font-body: "Noto Sans SC", -apple-system, "PingFang SC", sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --ease-out: cubic-bezier(.22, .8, .32, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--font-body);
+      font-variant-numeric: tabular-nums;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; }
+    img, svg { display: block; max-width: 100%; }
+
+    .page-frame {
+      min-height: 100vh;
+      width: 100%;
+      background: var(--bg);
+    }
+
+    .hero-shell {
+      position: relative;
+      width: 100%;
+      min-height: 100vh;
+      overflow: hidden;
+      isolation: isolate;
+      background: var(--bg);
+    }
+
+    .hero-video,
+    .video-poster {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .video-poster {
+      z-index: -4;
+      background:
+        linear-gradient(120deg, rgba(244, 238, 224, .72), rgba(244, 238, 224, .34)),
+        url("https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=60") center / cover;
+    }
+
+    .hero-video {
+      z-index: -3;
+      object-fit: cover;
+      pointer-events: none;
+      opacity: 1;
+      filter: none;
+    }
+
+    .nav-wrap {
+      position: relative;
+      z-index: 20;
+      height: 76px;
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      padding: 0 24px;
+      border-bottom: 1px solid rgba(221, 210, 188, .72);
+      background: rgba(244, 238, 224, .62);
+      backdrop-filter: saturate(145%) blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 290px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .brand-glyph {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-family: var(--font-display);
+      font-weight: 900;
+      font-size: 1.18rem;
+      box-shadow: 0 8px 18px rgba(143, 56, 21, .22);
+    }
+
+    .brand-name {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 1.18rem;
+      line-height: 1.05;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .brand-sub {
+      display: block;
+      margin-top: 3px;
+      color: var(--ink-3);
+      font-size: .64rem;
+      font-family: var(--font-mono);
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    .nav-links a,
+    .menu-toggle {
+      border: 0;
+      border-radius: 999px;
+      padding: 9px 17px;
+      background: transparent;
+      color: var(--ink-2);
+      font-size: .93rem;
+      font-weight: 800;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background .18s, color .18s, transform .18s;
+    }
+
+    .nav-links a:hover {
+      background: rgba(232, 223, 204, .76);
+      color: var(--ink);
+      transform: translateY(-1px);
+    }
+
+    .nav-links a.active {
+      background: var(--ink);
+      color: var(--bg);
+      box-shadow: 0 10px 20px rgba(40, 35, 26, .16);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: 10px;
+    }
+
+    .theme-pill {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 4px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(253, 250, 242, .74);
+      color: var(--ink-2);
+    }
+
+    .theme-pill span {
+      width: 27px;
+      height: 27px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      font-size: .86rem;
+    }
+
+    .theme-pill span:first-child {
+      background: var(--card);
+      color: var(--ink);
+      box-shadow: 0 2px 8px rgba(60, 46, 24, .10);
+    }
+
+    .user-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 6px 5px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(253, 250, 242, .78);
+      color: var(--ink-2);
+      font-size: .88rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .avatar-dot {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent-deep);
+      font-weight: 900;
+    }
+
+    .menu-toggle {
+      display: none;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+    }
+
+    .hero {
+      position: relative;
+      z-index: 2;
+      min-height: calc(72vh - 76px);
+      width: min(1560px, calc(100% - clamp(38px, 7vw, 150px)));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(318px, 420px);
+      gap: clamp(28px, 6vw, 118px);
+      align-items: center;
+      padding: clamp(44px, 7vh, 88px) 0 40px;
+    }
+
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: .82rem;
+      font-weight: 700;
+      letter-spacing: .24em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 650px;
+      color: var(--ink);
+      font-family: var(--font-display);
+      font-weight: 900;
+      font-size: clamp(4.55rem, 8.8vw, 9.4rem);
+      line-height: 1.06;
+      letter-spacing: 0;
+      text-wrap: balance;
+      text-shadow: 0 2px 18px rgba(253, 250, 242, .36);
+    }
+
+    h1 em {
+      color: var(--accent);
+      font-style: normal;
+    }
+
+    .hero-lede {
+      max-width: 740px;
+      margin: clamp(42px, 8vh, 132px) 0 0;
+      color: var(--ink-2);
+      font-size: clamp(1.02rem, 1.35vw, 1.28rem);
+      line-height: 1.88;
+      font-weight: 800;
+      text-shadow: 0 1px 14px rgba(253, 250, 242, .44);
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 38px;
+    }
+
+    .go-btn,
+    .ghost-btn {
+      min-height: 62px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border-radius: 999px;
+      padding: 0 34px;
+      border: 1.5px solid var(--ink);
+      font-size: 1.04rem;
+      font-weight: 800;
+      cursor: pointer;
+      transition: transform .18s var(--ease-out), box-shadow .2s, background .2s, color .2s;
+    }
+
+    .go-btn {
+      background: var(--ink);
+      color: var(--bg);
+      box-shadow: 0 12px 28px rgba(60, 46, 24, .16);
+    }
+
+    .go-btn:hover {
+      transform: translateY(-2px);
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+      box-shadow: 0 14px 32px rgba(143, 56, 21, .22);
+    }
+
+    .ghost-btn {
+      background: rgba(253, 250, 242, .66);
+      color: var(--ink);
+      border-color: var(--line);
+    }
+
+    .ghost-btn:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      color: var(--accent-deep);
+      background: var(--accent-soft);
+    }
+
+    .capability-panel {
+      justify-self: center;
+      width: min(410px, 100%);
+      padding: 38px 34px 26px;
+      border-radius: 24px;
+      border: 1px solid rgba(255, 255, 255, .58);
+      background: rgba(244, 250, 252, .34);
+      box-shadow: inset 0 0 0 1px rgba(253, 250, 242, .18), 0 18px 50px rgba(56, 108, 142, .12);
+      backdrop-filter: blur(14px) saturate(126%);
+    }
+
+    .panel-title {
+      color: var(--ink-2);
+      font-family: var(--font-mono);
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+
+    .panel-title::after {
+      content: "";
+      display: block;
+      width: 30px;
+      height: 2px;
+      margin-top: 16px;
+      background: var(--ink-3);
+      opacity: .6;
+    }
+
+    .capability-list {
+      display: grid;
+      margin-top: 28px;
+    }
+
+    .capability-item {
+      display: grid;
+      grid-template-columns: 64px 1fr;
+      gap: 18px;
+      align-items: center;
+      padding: 21px 0;
+      border-bottom: 1px solid rgba(84, 73, 61, .14);
+    }
+
+    .capability-item:last-child {
+      border-bottom: 0;
+    }
+
+    .capability-icon,
+    .feature-icon {
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      background: rgba(253, 250, 242, .86);
+      color: var(--accent);
+      box-shadow: 0 12px 26px rgba(60, 46, 24, .08);
+    }
+
+    .capability-icon {
+      width: 58px;
+      height: 58px;
+    }
+
+    .capability-icon svg,
+    .feature-icon svg {
+      width: 30px;
+      height: 30px;
+      stroke-width: 2.2;
+    }
+
+    .capability-item h2 {
+      margin: 0;
+      font-size: 1.08rem;
+      line-height: 1.2;
+      font-weight: 900;
+    }
+
+    .capability-item p {
+      margin: 9px 0 0;
+      color: var(--ink-3);
+      font-size: .92rem;
+      font-weight: 800;
+      line-height: 1.4;
+    }
+
+    .features {
+      position: relative;
+      z-index: 2;
+      width: min(1460px, calc(100% - clamp(38px, 7vw, 150px)));
+      margin: -18px auto 0;
+      padding: 0 0 clamp(34px, 6vh, 70px);
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 22px;
+    }
+
+    .feature-card {
+      position: relative;
+      min-height: 226px;
+      padding: 31px 32px;
+      border-radius: 22px;
+      background: rgba(253, 250, 242, .88);
+      border: 1px solid rgba(255, 255, 255, .72);
+      box-shadow: 0 18px 44px rgba(60, 46, 24, .10);
+      backdrop-filter: blur(16px) saturate(120%);
+    }
+
+    .feature-no {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 28px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: var(--bg);
+      font-family: var(--font-mono);
+      font-size: .78rem;
+      font-weight: 700;
+    }
+
+    .feature-card:nth-child(2) .feature-no { background: var(--accent); color: var(--accent-ink); }
+    .feature-card:nth-child(3) .feature-no { background: var(--second); color: var(--second-soft); }
+    .feature-card:nth-child(4) .feature-no { background: var(--gold); color: #1f1607; }
+
+    .feature-row {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 20px;
+      align-items: center;
+    }
+
+    .feature-icon {
+      width: 58px;
+      height: 58px;
+      color: var(--ink);
+      background: rgba(244, 238, 224, .72);
+    }
+
+    .feature-card:nth-child(2) .feature-icon { color: var(--accent); background: rgba(243, 221, 210, .78); }
+    .feature-card:nth-child(3) .feature-icon { color: var(--second); background: rgba(226, 232, 217, .82); }
+    .feature-card:nth-child(4) .feature-icon { color: var(--gold); background: rgba(244, 236, 213, .82); }
+
+    .feature-card h2 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 1.28rem;
+      line-height: 1.2;
+    }
+
+    .feature-card p {
+      margin: 10px 0 0;
+      color: var(--ink-3);
+      line-height: 1.62;
+      font-size: .96rem;
+      font-weight: 700;
+    }
+
+    .card-arrow {
+      position: absolute;
+      right: 28px;
+      bottom: 24px;
+      color: var(--ink-4);
+      font-size: 1.44rem;
+      line-height: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        transition-duration: .01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    @media (max-width: 1120px) {
+      .nav-wrap {
+        padding-inline: 18px;
+      }
+
+      .brand {
+        min-width: auto;
+      }
+
+      .brand-name {
+        white-space: nowrap;
+      }
+
+      .brand-sub,
+      .theme-pill {
+        display: none;
+      }
+
+      .nav-links a,
+      .menu-toggle {
+        padding-inline: 12px;
+        font-size: .86rem;
+      }
+
+      .hero {
+        width: min(100% - 44px, 1040px);
+      }
+
+      .features {
+        width: min(100% - 48px, 880px);
+        margin-top: 0;
+      }
+
+      .feature-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 900px) {
+      .hero {
+        width: min(100% - 48px, 760px);
+        grid-template-columns: 1fr;
+        gap: 42px;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .nav-wrap {
+        min-height: 72px;
+        height: auto;
+        padding: 13px 14px;
+        align-items: flex-start;
+      }
+
+      .brand-glyph {
+        width: 36px;
+        height: 36px;
+      }
+
+      .brand-name {
+        font-size: 1rem;
+      }
+
+      .nav-links {
+        display: none;
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        top: calc(100% + 8px);
+        margin: 0;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(253, 250, 242, .96);
+        box-shadow: var(--shadow);
+      }
+
+      .nav-links.open {
+        display: grid;
+        gap: 6px;
+        z-index: 30;
+      }
+
+      .nav-links a {
+        justify-content: flex-start;
+        border-radius: 14px;
+        padding: 12px 14px;
+      }
+
+      .menu-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .nav-actions {
+        margin-left: auto;
+      }
+
+      .user-pill {
+        display: none;
+      }
+
+      .hero {
+        width: min(100% - 28px, 620px);
+        min-height: auto;
+        padding: 42px 0 36px;
+      }
+
+      .hero-eyebrow {
+        gap: 10px;
+        margin-bottom: 20px;
+        font-size: .68rem;
+        letter-spacing: .14em;
+      }
+
+      h1 {
+        font-size: clamp(4rem, 18vw, 5.8rem);
+      }
+
+      .hero-lede {
+        margin-top: 20px;
+        font-size: 1rem;
+        line-height: 1.8;
+      }
+
+      .go-btn,
+      .ghost-btn {
+        width: 100%;
+        min-height: 54px;
+      }
+
+      .capability-panel {
+        padding: 28px 22px 18px;
+      }
+
+      .capability-item {
+        grid-template-columns: 52px 1fr;
+        gap: 14px;
+      }
+
+      .capability-icon,
+      .feature-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 15px;
+      }
+
+      .features {
+        width: min(100% - 28px, 620px);
+        padding-bottom: 48px;
+      }
+
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .feature-row {
+        grid-template-columns: 56px 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-frame">
+    <main class="hero-shell">
+      <div class="video-poster" aria-hidden="true"></div>
+      <video
+        class="hero-video"
+        autoplay
+        loop
+        muted
+        playsinline
+        preload="auto"
+        disableRemotePlayback
+        webkit-playsinline="true"
+        x5-playsinline="true"
+        poster="https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=60"
+      >
+        <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260424_064411_9e9d7f84-9277-41f4-ab10-59172d89e6be.mp4" type="video/mp4" />
+      </video>
+
+      <header class="nav-wrap">
+        <a class="brand" href="#">
+          <span class="brand-glyph">途</span>
+          <span>
+            <span class="brand-name">途见 · AI 旅行规划</span>
+            <span class="brand-sub">Travel Journal by Agents</span>
+          </span>
+        </a>
+
+        <nav class="nav-links" id="mainNav" aria-label="主导航">
+          <a class="active" href="#">Home</a>
+          <a href="#start">Start Journey</a>
+          <a href="#abilities">Itinerary Details</a>
+          <a href="#abilities">Trip History</a>
+          <a href="#profile">My Profile</a>
+        </nav>
+
+        <div class="nav-actions">
+          <div class="theme-pill" aria-label="主题预览">
+            <span>☀</span>
+            <span>🍃</span>
+            <span>🌙</span>
+          </div>
+          <div class="user-pill">
+            <span>test</span>
+            <span class="avatar-dot">t</span>
+          </div>
+          <button class="menu-toggle" type="button" id="menuToggle" aria-label="打开导航" aria-expanded="false">菜单</button>
+        </div>
+      </header>
+
+      <section class="hero" id="start">
+        <div class="hero-copy">
+          <div class="hero-eyebrow">AI Travel Planner · Product Intro</div>
+          <h1>你只管<br />期待出发。</h1>
+          <p class="hero-lede">
+            从灵感到出发，途见帮你把复杂的旅行决策变成一份真正可执行的计划。<br />
+            多位 AI Agent 协同完成景点检索、路线编排、餐饮建议、天气参考与交通校验，<br />
+            在几分钟内生成清晰、好读、可落地的旅行方案。
+          </p>
+          <div class="hero-actions">
+            <a class="go-btn" href="#start">立即开始规划 <span aria-hidden="true">→</span></a>
+            <a class="ghost-btn" href="#abilities">查看产品能力</a>
+          </div>
+        </div>
+
+        <aside class="capability-panel" aria-label="规划能力">
+          <div class="panel-title">Planning Capabilities</div>
+          <div class="capability-list">
+            <article class="capability-item">
+              <span class="capability-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M16 20v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="10" cy="7" r="4" />
+                  <path d="M20 20v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M17 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </span>
+              <span>
+                <h2>多 Agent 协同规划</h2>
+                <p>专业分工，高效协作</p>
+              </span>
+            </article>
+            <article class="capability-item">
+              <span class="capability-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+              </span>
+              <span>
+                <h2>自动校验路线与时间</h2>
+                <p>时间、交通、天气智能校验</p>
+              </span>
+            </article>
+            <article class="capability-item">
+              <span class="capability-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M6 3h9l4 4v14H6z" />
+                  <path d="M14 3v5h5" />
+                  <path d="M9 13h6" />
+                  <path d="M9 17h6" />
+                </svg>
+              </span>
+              <span>
+                <h2>输出可执行行程</h2>
+                <p>清晰、好读、可直接使用</p>
+              </span>
+            </article>
+          </div>
+        </aside>
+      </section>
+
+      <section class="features" id="abilities" aria-label="产品能力">
+        <div class="feature-grid">
+          <article class="feature-card" id="profile">
+            <div class="feature-no">01</div>
+            <div class="feature-row">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.4-3.4" />
+                </svg>
+              </span>
+              <span>
+                <h2>需求理解</h2>
+                <p>识别目的地、天数、用户偏好</p>
+              </span>
+            </div>
+            <span class="card-arrow" aria-hidden="true">→</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-no">02</div>
+            <div class="feature-row">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M6 18c3-7 9-5 12-12" />
+                  <path d="M7 7h.01" />
+                  <path d="M17 17h.01" />
+                  <path d="M8 7a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+                  <path d="M20 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+                </svg>
+              </span>
+              <span>
+                <h2>智能规划</h2>
+                <p>拆解景点、交通、餐饮与节奏安排</p>
+              </span>
+            </div>
+            <span class="card-arrow" aria-hidden="true">→</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-no">03</div>
+            <div class="feature-row">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M8 2v4" />
+                  <path d="M16 2v4" />
+                  <rect x="4" y="5" width="16" height="16" rx="2" />
+                  <path d="M8 13l3 3 5-6" />
+                </svg>
+              </span>
+              <span>
+                <h2>路线校验</h2>
+                <p>结合时间、天气与通行方式优化行程</p>
+              </span>
+            </div>
+            <span class="card-arrow" aria-hidden="true">→</span>
+          </article>
+          <article class="feature-card">
+            <div class="feature-no">04</div>
+            <div class="feature-row">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M6 3h9l4 4v14H6z" />
+                  <path d="M14 3v5h5" />
+                  <path d="M9 13h6" />
+                  <path d="M9 17h4" />
+                </svg>
+              </span>
+              <span>
+                <h2>结果交付</h2>
+                <p>生成清晰、可执行、可编辑的旅游计划</p>
+              </span>
+            </div>
+            <span class="card-arrow" aria-hidden="true">→</span>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const heroVideo = document.querySelector(".hero-video");
+    const playHeroVideo = () => {
+      heroVideo?.play?.().catch(() => {});
+    };
+    playHeroVideo();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) playHeroVideo();
+    });
+    window.addEventListener("pointerdown", playHeroVideo, { once: true });
+
+    const toggle = document.getElementById("menuToggle");
+    const nav = document.getElementById("mainNav");
+    toggle?.addEventListener("click", () => {
+      const open = nav.classList.toggle("open");
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.textContent = open ? "收起" : "菜单";
+    });
+  </script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import date, timedelta
@@ -10,7 +11,7 @@ from typing import Annotated, Any
 logger = logging.getLogger(__name__)
 
 from app.llm.factory import build_structured_llm
-from app.providers.amap.poi import search_around_pois
+from app.providers.amap.poi import search_around_pois, search_around_pois_async
 from app.planning.schemas import (
     DayMealPick,
     IntentExtraction,
@@ -29,12 +30,14 @@ from app.planning.helpers import (
     cluster_pois_by_location,
     dinner_anchor_spot,
     fetch_city_spots,
+    fetch_city_spots_async,
     fetch_weather_for_dates,
+    fetch_weather_for_dates_async,
     filter_by_rating,
     format_spots_for_llm,
     format_weather_for_llm,
     haversine_km,
-    invoke_structured,
+    ainvoke_structured,
     last_spot_of_period,
     parse_iso_date,
     restaurant_to_dict,
@@ -63,16 +66,20 @@ def make_query_rewrite_node(model_name: str | None, user_id: str | None):
     """固定工作流：直接读取用户画像，单次结构化 LLM 调用改写 query 并输出冲突解析后的偏好字段。"""
     rewrite_llm = build_structured_llm(RewrittenQuery, model=model_name, temperature=0)
 
-    def query_rewrite(state: TravelPlanState) -> dict[str, Any]:
+    async def query_rewrite(state: TravelPlanState) -> dict[str, Any]:
         raw = state.query
         try:
             # Step 1：直接读画像（固定查全部三字段，不走 ReAct tool）
             profile_text = "（该用户暂无历史画像）"
             if user_id:
-                with get_conn() as conn:
-                    data = search_profile_fields(
-                        user_id, ["attraction_prefs", "food_prefs", "habit_prefs"], conn
-                    )
+                def load_profile():
+                    with get_conn() as conn:
+                        return search_profile_fields(
+                            user_id,
+                            ["attraction_prefs", "food_prefs", "habit_prefs"],
+                            conn,
+                        )
+                data = await asyncio.to_thread(load_profile)
                 if data and any(data.values()):
                     parts = []
                     if data.get("attraction_prefs"):
@@ -88,7 +95,7 @@ def make_query_rewrite_node(model_name: str | None, user_id: str | None):
                 f"本次查询提取的偏好：景点={state.attraction_preference or '无'}，"
                 f"餐饮={state.food_preference or '无'}，习惯={state.habit_preference or '无'}"
             )
-            rewritten: RewrittenQuery = invoke_structured(rewrite_llm, [
+            rewritten: RewrittenQuery = await ainvoke_structured(rewrite_llm, [
                 ("system", QUERY_REWRITE_SYSTEM),
                 ("human", f"原始查询：{raw}\n\n{intent_prefs}\n\n用户历史画像：\n{profile_text}"),
             ])
@@ -115,7 +122,7 @@ def make_query_rewrite_node(model_name: str | None, user_id: str | None):
 def make_intent_node(model_name: str | None, profile_hint: str = ""):
     llm = build_structured_llm(IntentExtraction, model=model_name, temperature=0)
 
-    def intent(state: TravelPlanState) -> dict[str, Any]:
+    async def intent(state: TravelPlanState) -> dict[str, Any]:
         today = date.today()
         system = INTENT_SYSTEM.format(today=today.isoformat(), weekday=WEEKDAYS[today.weekday()])
         # 注入用户历史偏好作为默认值参考
@@ -123,7 +130,7 @@ def make_intent_node(model_name: str | None, profile_hint: str = ""):
         if hint:
             system += f"\n\n用户历史偏好（仅供参考，以用户本次输入为准，用户未说的字段才用历史默认值）：\n{hint}"
         effective_query = state.query
-        result: IntentExtraction = invoke_structured(
+        result: IntentExtraction = await ainvoke_structured(
             llm, [("system", system), ("human", effective_query)]
         )
 
@@ -154,7 +161,9 @@ def make_intent_node(model_name: str | None, profile_hint: str = ""):
         forecast: list[dict[str, Any]] = []
         w_note: str | None = None
         if not missing and destination and start and end:
-            forecast, w_note = fetch_weather_for_dates(destination, start, end, amap_key())
+            forecast, w_note = await fetch_weather_for_dates_async(
+                destination, start, end, amap_key()
+            )
 
         # 偏好归一化：去空白，并把 LLM 偶吐的 'null'/'无' 等占位垃圾值视为无偏好
         opt = clean_pref
@@ -190,9 +199,11 @@ def route_after_intent(state: TravelPlanState) -> str:
 
 # ─── 高德景点搜索 ─────────────────────────────────────────────
 
-def attraction_search_node(state: TravelPlanState) -> dict[str, Any]:
+async def attraction_search_node(state: TravelPlanState) -> dict[str, Any]:
     api_key = amap_key()
-    spots = fetch_city_spots(state.destination or "", api_key, max_spots=state.max_spots)
+    spots = await fetch_city_spots_async(
+        state.destination or "", api_key, max_spots=state.max_spots
+    )
     kept, _ = filter_by_rating(spots, state.min_rating)
     note = f"高德景点搜索：抓取 {len(spots)} 个，rating≥{state.min_rating} 保留 {len(kept)} 个"
     return {"pois": kept, "history": state.history + [note]}
@@ -219,7 +230,7 @@ def _travel_dates_block(state: TravelPlanState) -> str:
 def make_planner_node(model_name: str | None):
     llm = build_structured_llm(TravelRoute, model=model_name, temperature=0.3)
 
-    def planner(state: TravelPlanState) -> dict[str, Any]:
+    async def planner(state: TravelPlanState) -> dict[str, Any]:
         # ① 上一轮景点集合（用于 spot diff，检测"notes 说改但 JSON 未变"）
         old_spots = {s["name"] for day in (state.route or []) for s in day.get("spots", [])}
         # ② 是否最终修订轮（review_round 尚未 +1 时检测）
@@ -288,7 +299,7 @@ def make_planner_node(model_name: str | None):
             f"{final_note}\n\n"
             f"请给出 {state.days} 天带时刻表的逐天景点安排。"
         )
-        result: TravelRoute = invoke_structured(llm, [("system", PLANNER_SYSTEM), ("human", prompt)])
+        result: TravelRoute = await ainvoke_structured(llm, [("system", PLANNER_SYSTEM), ("human", prompt)])
         route = [d.model_dump() for d in result.days]
         rnd = state.review_round + 1
 
@@ -340,7 +351,7 @@ def make_planner_node(model_name: str | None):
 def make_reviewer_node(model_name: str | None):
     llm = build_structured_llm(RouteReview, model=model_name, temperature=0)
 
-    def reviewer(state: TravelPlanState) -> dict[str, Any]:
+    async def reviewer(state: TravelPlanState) -> dict[str, Any]:
         bad_unknown = unknown_spots(state.route, state.pois)
 
         facts = f"非候选池景点：{('；'.join(bad_unknown)) or '无'}"
@@ -378,7 +389,7 @@ def make_reviewer_node(model_name: str | None):
             f"请评审并给出结论。⚠️ 开放时间和闭馆日由 time_check 专项 Agent 单独核查，"
             f"你不要评审开放时间相关问题。"
         )
-        result: RouteReview = invoke_structured(llm, [("system", REVIEWER_SYSTEM), ("human", prompt)])
+        result: RouteReview = await ainvoke_structured(llm, [("system", REVIEWER_SYSTEM), ("human", prompt)])
         approved = result.approved and not bad_unknown
         verdict  = "✅通过" if approved else "❌打回"
 
@@ -466,7 +477,7 @@ def make_time_check_node(model_name: str | None):
     """
     llm = build_structured_llm(TimeCheckResult, model=model_name, temperature=0)
 
-    def time_check(state: TravelPlanState) -> dict[str, Any]:
+    async def time_check(state: TravelPlanState) -> dict[str, Any]:
         rnd = state.time_check_round + 1
 
         # 拼当天日期/星期 + 每个景点的 安排时段 + 开放原文
@@ -491,7 +502,7 @@ def make_time_check_node(model_name: str | None):
         )
 
         try:
-            result: TimeCheckResult = invoke_structured(
+            result: TimeCheckResult = await ainvoke_structured(
                 llm, [("system", TIME_CHECK_SYSTEM), ("human", prompt)], retries=3
             )
         except RuntimeError:
@@ -555,7 +566,7 @@ def make_time_check_node(model_name: str | None):
 
 # ─── 餐饮搜索 ────────────────────────────────────────────────
 
-def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
+async def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
     api_key  = amap_key()
     loc_map  = spot_location_map(state.pois)
     meal_candidates: list[dict[str, Any]] = []
@@ -574,7 +585,13 @@ def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
                 warnings.append(f"Day{day_no} {meal} 无中心景点坐标")
                 entry[meal] = {"anchor": anchor["name"] if anchor else None, "candidates": []}
                 continue
-            raw   = search_around_pois(center, api_key, types="餐饮服务", radius=1000, offset=20)
+            raw = await search_around_pois_async(
+                center,
+                api_key,
+                types="餐饮服务",
+                radius=1000,
+                offset=20,
+            )
             cands = [r for r in (restaurant_to_dict(p) for p in raw) if r][:20]
             if not cands:
                 warnings.append(f"Day{day_no} {meal}（{anchor['name']} 周边）无餐饮")
@@ -588,11 +605,9 @@ def meal_search_node(state: TravelPlanState) -> dict[str, Any]:
 # ─── 餐厅推荐 ────────────────────────────────────────────────
 
 def make_meal_recommend_node(model_name: str | None):
-    from concurrent.futures import ThreadPoolExecutor
-
     llm = build_structured_llm(SingleDayMealPick, model=model_name, temperature=0)
 
-    def meal_recommend(state: TravelPlanState) -> dict[str, Any]:
+    async def meal_recommend(state: TravelPlanState) -> dict[str, Any]:
 
         def _top(cands: list[dict[str, Any]], n: int = 10) -> list[dict[str, Any]]:
             """按评分降序取前 n 家，减少喂给 LLM 的 token。"""
@@ -607,7 +622,7 @@ def make_meal_recommend_node(model_name: str | None):
                 for c in cands
             )
 
-        def _recommend_day(entry: dict[str, Any]) -> DayMealPick:
+        async def _recommend_day(entry: dict[str, Any]) -> DayMealPick:
             """单天 LLM 调用；失败时取评分最高的餐厅降级兜底。"""
             lunch_cands  = _top(entry["lunch"].get("candidates", []))
             dinner_cands = _top(entry["dinner"].get("candidates", []))
@@ -618,7 +633,7 @@ def make_meal_recommend_node(model_name: str | None):
                 "请选出今天的午餐和晚餐。"
             )
             try:
-                r: SingleDayMealPick = invoke_structured(
+                r: SingleDayMealPick = await ainvoke_structured(
                     llm, [("system", MEAL_SYSTEM), ("human", prompt)], retries=5
                 )
                 return DayMealPick(day=entry["day"], **r.model_dump())
@@ -633,11 +648,12 @@ def make_meal_recommend_node(model_name: str | None):
                     dinner_reason="（系统自动选取评分最高餐厅）",
                 )
 
-        # 不同天并行调用 LLM
-        with ThreadPoolExecutor(max_workers=max(1, len(state.meal_candidates))) as ex:
-            day_picks: list[DayMealPick] = list(
-                ex.map(_recommend_day, state.meal_candidates)
+        # 不同天并行调用 LLM；gather 保持与输入相同的确定性顺序。
+        day_picks: list[DayMealPick] = list(
+            await asyncio.gather(
+                *(_recommend_day(entry) for entry in state.meal_candidates)
             )
+        )
 
         def _lookup(name: str, cands_dict: dict[str, Any], cands_list: list[dict]) -> dict | None:
             """子串匹配候选餐厅；LLM 名称改写时宽松匹配（含子串即算）。
@@ -708,7 +724,7 @@ def make_spot_tips_node(model_name: str | None):
     """
     llm = build_structured_llm(SpotTipsResult, model=model_name, temperature=0)
 
-    def spot_tips_node(state: TravelPlanState) -> dict[str, Any]:
+    async def spot_tips_node(state: TravelPlanState) -> dict[str, Any]:
         spot_names: list[str] = []
         lines: list[str] = []
         for day in state.route:
@@ -733,7 +749,7 @@ def make_spot_tips_node(model_name: str | None):
             f"逐天天气预报：\n{weather_text}"
         )
         try:
-            result: SpotTipsResult = invoke_structured(
+            result: SpotTipsResult = await ainvoke_structured(
                 llm, [("system", SPOT_TIPS_SYSTEM), ("human", prompt)]
             )
         except RuntimeError:

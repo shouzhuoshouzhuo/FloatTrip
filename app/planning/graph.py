@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncIterator
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.config import get_stream_writer
+from langgraph.types import interrupt
 
 from app.planning.schemas import TravelPlanState
 from app.planning.helpers import invoke_structured  # re-export for convenience
@@ -29,30 +32,77 @@ from app.planning.nodes import (
 
 # ─── 构图 ────────────────────────────────────────────────────
 
+
+def _with_progress(node_name: str, action):
+    """Emit a stable public product event without exposing graph internals."""
+    label = _NODE_LABELS.get(node_name, "正在处理")
+
+    async def wrapped(state, config=None):
+        writer = get_stream_writer()
+        writer(
+            {
+                "kind": "planning_run.progress",
+                "stage": node_name,
+                "label": label,
+            }
+        )
+        result = await asyncio.to_thread(action, state)
+        if hasattr(result, "__await__"):
+            return await result
+        return result
+
+    return wrapped
+
+
+def _require_missing_input(state: TravelPlanState) -> dict[str, Any]:
+    response = interrupt(
+        {
+            "question": "请补充：" + "、".join(state.missing_fields),
+            "input_schema": {"type": "string", "minLength": 1},
+        }
+    )
+    return {
+        "query": f"{state.query}，{str(response).strip()}",
+        "missing_fields": [],
+    }
+
 def build_graph(
     model_name: str | None = None,
     profile_hint: str = "",
     memory_writer=None,
     user_id: str | None = None,
+    *,
+    checkpointer=None,
+    interrupt_on_missing: bool = False,
 ):
     g = StateGraph(TravelPlanState)
 
-    g.add_node("query_rewrite",    make_query_rewrite_node(model_name, user_id))
-    g.add_node("intent",           make_intent_node(model_name, profile_hint=profile_hint))
-    g.add_node("attraction_search", attraction_search_node)
-    g.add_node("planner",          make_planner_node(model_name))
-    g.add_node("reviewer",         make_reviewer_node(model_name))
-    g.add_node("time_check",       make_time_check_node(model_name))
-    g.add_node("meal_search",      meal_search_node)
-    g.add_node("meal_recommend",   make_meal_recommend_node(model_name))
-    g.add_node("spot_tips",        make_spot_tips_node(model_name))
-    g.add_node("finalize",         make_finalize_node(memory_writer))
+    g.add_node("query_rewrite", _with_progress("query_rewrite", make_query_rewrite_node(model_name, user_id)))
+    g.add_node("intent", _with_progress("intent", make_intent_node(model_name, profile_hint=profile_hint)))
+    g.add_node("attraction_search", _with_progress("attraction_search", attraction_search_node))
+    g.add_node("planner", _with_progress("planner", make_planner_node(model_name)))
+    g.add_node("reviewer", _with_progress("reviewer", make_reviewer_node(model_name)))
+    g.add_node("time_check", _with_progress("time_check", make_time_check_node(model_name)))
+    g.add_node("meal_search", _with_progress("meal_search", meal_search_node))
+    g.add_node("meal_recommend", _with_progress("meal_recommend", make_meal_recommend_node(model_name)))
+    g.add_node("spot_tips", _with_progress("spot_tips", make_spot_tips_node(model_name)))
+    g.add_node("finalize", _with_progress("finalize", make_finalize_node(memory_writer)))
+    if interrupt_on_missing:
+        g.add_node("require_input", _require_missing_input)
 
     g.add_edge(START,   "intent")
-    g.add_conditional_edges(
-        "intent", route_after_intent,
-        {"query_rewrite": "query_rewrite", END: END}
-    )
+    if interrupt_on_missing:
+        g.add_conditional_edges(
+            "intent",
+            lambda state: "require_input" if state.missing_fields else "query_rewrite",
+            {"query_rewrite": "query_rewrite", "require_input": "require_input"},
+        )
+        g.add_edge("require_input", "intent")
+    else:
+        g.add_conditional_edges(
+            "intent", route_after_intent,
+            {"query_rewrite": "query_rewrite", END: END}
+        )
     g.add_edge("query_rewrite",    "attraction_search")
     g.add_edge("attraction_search", "planner")
     # planner 输出：time_check_done=False 时进 reviewer 走主循环；True 时进 time_check 重新核查
@@ -75,7 +125,7 @@ def build_graph(
     g.add_edge("spot_tips",      "finalize")
     g.add_edge("finalize",       END)
 
-    return g.compile()
+    return g.compile(checkpointer=checkpointer)
 
 
 # ─── 流水线入口 ───────────────────────────────────────────────
@@ -156,6 +206,61 @@ def build_modification_graph(model_name: str | None = None, memory_writer=None):
     g.add_edge("spot_tips",      "finalize")
     g.add_edge("finalize",       END)
     return g.compile()
+
+
+def _revision_concern_node(state: TravelPlanState) -> dict[str, Any]:
+    if not state.modification_concern:
+        return {}
+    response = interrupt(
+        {
+            "question": state.modification_concern,
+            "input_schema": {
+                "type": "string",
+                "description": "确认继续修改，或补充新的修改要求",
+            },
+        }
+    )
+    response_text = str(response).strip()
+    return {
+        "modification_concern": None,
+        "route_modify_opinion": (
+            state.route_modify_opinion
+            if not response_text
+            else f"{state.route_modify_opinion or ''}\n【用户确认/补充】{response_text}"
+        ),
+    }
+
+
+def build_runtime_revision_graph(
+    model_name: str | None = None,
+    *,
+    checkpointer=None,
+):
+    """Checkpointed revision graph using the same interrupt lifecycle as planning."""
+    graph = StateGraph(TravelPlanState)
+    graph.add_node("planner", _with_progress("planner", make_planner_node(model_name)))
+    graph.add_node("revision_concern", _revision_concern_node)
+    graph.add_node("reviewer", _with_progress("reviewer", make_reviewer_node(model_name)))
+    graph.add_node("meal_search", _with_progress("meal_search", meal_search_node))
+    graph.add_node(
+        "meal_recommend",
+        _with_progress("meal_recommend", make_meal_recommend_node(model_name)),
+    )
+    graph.add_node("spot_tips", _with_progress("spot_tips", make_spot_tips_node(model_name)))
+    graph.add_node("finalize", _with_progress("finalize", make_finalize_node(None)))
+    graph.add_edge(START, "planner")
+    graph.add_edge("planner", "revision_concern")
+    graph.add_edge("revision_concern", "reviewer")
+    graph.add_conditional_edges(
+        "reviewer",
+        _route_after_review_for_modification,
+        {"planner": "planner", "meal_search": "meal_search"},
+    )
+    graph.add_edge("meal_search", "meal_recommend")
+    graph.add_edge("meal_recommend", "spot_tips")
+    graph.add_edge("spot_tips", "finalize")
+    graph.add_edge("finalize", END)
+    return graph.compile(checkpointer=checkpointer)
 
 
 def build_confirm_graph(model_name: str | None = None, memory_writer=None):

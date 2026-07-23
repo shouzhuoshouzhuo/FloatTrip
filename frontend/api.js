@@ -16,24 +16,49 @@ function authHeaders() {
   return a ? { "Authorization": "Bearer " + a.token } : {};
 }
 
+async function readJsonResponse(response, fallbackMessage = "请求失败") {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    const looksLikeHtml = /^\s*(?:<!doctype|<html)/i.test(text);
+    throw new Error(
+      looksLikeHtml
+        ? "当前页面连接到的是静态预览，无法使用登录和规划功能。请通过完整应用地址重新打开。"
+        : fallbackMessage
+    );
+  }
+}
+
 async function loginApi(username, password) {
-  const r = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const d = await r.json();
+  let r;
+  try {
+    r = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch {
+    throw new Error("暂时无法连接到登录服务，请确认完整应用已经启动。");
+  }
+  const d = await readJsonResponse(r, "登录服务返回了无法识别的响应");
   if (!r.ok) throw new Error(d.detail || "登录失败");
   return d;
 }
 
 async function registerApi(username, password) {
-  const r = await fetch("/api/auth/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const d = await r.json();
+  let r;
+  try {
+    r = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch {
+    throw new Error("暂时无法连接到注册服务，请确认完整应用已经启动。");
+  }
+  const d = await readJsonResponse(r, "注册服务返回了无法识别的响应");
   if (!r.ok) throw new Error(d.detail || "注册失败");
   return d;
 }
@@ -112,6 +137,129 @@ async function confirmModification(pending_id, parent_plan_id, callbacks) {
     callbacks,
     "/api/plan/confirm_modification"
   );
+}
+
+/* ── Conversations / Agent Runtime ────────────────── */
+async function apiJson(url, options = {}) {
+  const r = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...authHeaders(),
+      ...(options.headers || {}),
+    },
+  });
+  const data = await readJsonResponse(r);
+  if (!r.ok) throw new Error(
+    typeof data?.detail === "string" ? data.detail : "请求失败"
+  );
+  return data;
+}
+
+function listConversations() {
+  return apiJson("/api/conversations");
+}
+function createConversation(title = "") {
+  return apiJson("/api/conversations", {
+    method: "POST", body: JSON.stringify({ title }),
+  });
+}
+function getConversationMessages(id, afterSequence = 0) {
+  return apiJson(`/api/conversations/${id}/messages?after_sequence=${afterSequence}`);
+}
+function submitConversationMessage(id, content, context = {}) {
+  return apiJson(`/api/conversations/${id}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ content, ...context }),
+  });
+}
+function getActivePlanningBrief(conversationId) {
+  return apiJson(`/api/conversations/${conversationId}/planning-brief`);
+}
+function updatePlanningBrief(id, patch) {
+  return apiJson(`/api/planning-briefs/${id}`, {
+    method: "PATCH", body: JSON.stringify(patch),
+  });
+}
+function submitPlanningBrief(id) {
+  return apiJson(`/api/planning-briefs/${id}/submit`, { method: "POST" });
+}
+function discardPlanningBrief(id) {
+  return apiJson(`/api/planning-briefs/${id}/discard`, { method: "POST" });
+}
+function listRuns(conversationId, activeOnly = false) {
+  const query = new URLSearchParams();
+  if (conversationId) query.set("conversation_id", conversationId);
+  if (activeOnly) query.set("active_only", "true");
+  return apiJson(`/api/runs?${query}`);
+}
+function createRuntimeRun(kind, conversationId, request, relatedItineraryId = null) {
+  return apiJson("/api/runs", {
+    method: "POST",
+    body: JSON.stringify({
+      kind,
+      conversation_id: conversationId,
+      request,
+      related_itinerary_id: relatedItineraryId,
+    }),
+  });
+}
+function getRun(id) {
+  return apiJson(`/api/runs/${id}`);
+}
+function getRunEvents(id, afterSequence = 0) {
+  return apiJson(`/api/runs/${id}/events?after_seq=${afterSequence}`);
+}
+function cancelRuntimeRun(id) {
+  return apiJson(`/api/runs/${id}/cancel`, { method: "POST" });
+}
+function retryRuntimeRun(id) {
+  return apiJson(`/api/runs/${id}/retry`, { method: "POST" });
+}
+function resumeRuntimeRun(id, interactionId, value) {
+  return apiJson(`/api/runs/${id}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ interaction_id: interactionId, value }),
+  });
+}
+
+async function streamRuntimeRun(runId, afterSeq, callbacks = {}) {
+  const ctrl = new AbortController();
+  callbacks.onAbort?.(() => ctrl.abort());
+  try {
+    const r = await fetch(`/api/runs/${runId}/stream?after_seq=${afterSeq || 0}`, {
+      headers: authHeaders(),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) throw new Error("订阅任务失败");
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop();
+      for (const frame of frames) {
+        let kind = "custom";
+        let sequence = null;
+        let payload = {};
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) kind = line.slice(6).trim();
+          else if (line.startsWith("id:")) sequence = Number(line.slice(3).trim());
+          else if (line.startsWith("data:")) {
+            try { payload = JSON.parse(line.slice(5).trim()); } catch {}
+          }
+        }
+        callbacks.onEvent?.({ kind, sequence, payload });
+      }
+    }
+    callbacks.onClose?.();
+  } catch (error) {
+    if (error.name !== "AbortError") callbacks.onError?.(error);
+  }
+  return () => ctrl.abort();
 }
 
 /* ── History ──────────────────────────────────────── */

@@ -81,6 +81,846 @@ function ConcernModal({ concern, onKeep, onConfirm }) {
   );
 }
 
+/* ── 持久化旅行对话 ─────────────────────────────── */
+function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
+  const [conversations, setConversations] = React.useState([]);
+  const [activeId, setActiveId] = React.useState(null);
+  const [state, setState] = React.useState(() => ChatState.initialState());
+  const [draft, setDraft] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState("");
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [visibleRunIds, setVisibleRunIds] = React.useState(() => new Set());
+  const [observerReady, setObserverReady] = React.useState(false);
+  const [composerTarget, setComposerTarget] = React.useState(null);
+  const abortsRef = React.useRef({});
+  const runNodesRef = React.useRef({});
+  const composerRef = React.useRef(null);
+  const errorRef = React.useRef(null);
+  const waitingRunsRef = React.useRef(new Set());
+  const activityItems = ChatState.activityItems(state);
+  const runList = Object.values(state.runs).sort(
+    (a, b) => String(a.created_at || "").localeCompare(String(b.created_at || ""))
+  );
+  const activeRuns = runList.filter(
+    run => run.kind !== "chat" && ["queued", "running", "waiting_user"].includes(run.status)
+  );
+
+  const persistCursor = (runId, sequence) => {
+    if (!sequence) return;
+    localStorage.setItem(`run-cursor:${runId}`, String(sequence));
+  };
+
+  const applyRunEvent = React.useCallback((runId, event) => {
+    setState(previous => {
+      const next = ChatState.applyEvent(previous, runId, event);
+      persistCursor(runId, next.cursors[runId]);
+      return next;
+    });
+  }, []);
+
+  const subscribeRun = React.useCallback((run, explicitCursor = null) => {
+    if (!run?.id || abortsRef.current[run.id]) return;
+    const cursor = explicitCursor === null
+      ? Number(localStorage.getItem(`run-cursor:${run.id}`) || 0)
+      : Number(explicitCursor);
+    streamRuntimeRun(run.id, cursor, {
+      onAbort: abort => { abortsRef.current[run.id] = abort; },
+      onEvent: event => {
+        applyRunEvent(run.id, event);
+        if (event.payload?.kind === "run.created" && event.payload.run?.id) {
+          subscribeRun(event.payload.run);
+        }
+      },
+      onClose: () => { delete abortsRef.current[run.id]; },
+      onError: () => { delete abortsRef.current[run.id]; },
+    });
+  }, [applyRunEvent]);
+
+  const loadConversation = React.useCallback(async (conversationId) => {
+    setActiveId(conversationId);
+    setLoading(true);
+    setError("");
+    Object.values(abortsRef.current).forEach(abort => abort());
+    abortsRef.current = {};
+    try {
+      const [messages, runs, brief] = await Promise.all([
+        getConversationMessages(conversationId),
+        listRuns(conversationId),
+        getActivePlanningBrief(conversationId),
+      ]);
+      const activeRuns = runs.filter(
+        run => ["queued", "running", "waiting_user"].includes(run.status)
+      );
+      const eventHistories = await Promise.all(
+        activeRuns.map(async run => [run.id, await getRunEvents(run.id, 0)])
+      );
+      let next = ChatState.initialState();
+      messages.forEach(message => { next = ChatState.upsertMessage(next, message); });
+      runs.forEach(run => {
+        const previous = next.runs[run.id] || {};
+        next.runs[run.id] = { ...previous, ...run };
+      });
+      if (brief) next.briefs[brief.id] = brief;
+      eventHistories.forEach(([runId, events]) => {
+        events.forEach(event => {
+          next = ChatState.applyEvent(next, runId, event);
+        });
+        persistCursor(runId, next.cursors[runId]);
+      });
+      setState(next);
+      setComposerTarget(null);
+      setSidebarOpen(false);
+      activeRuns.forEach(
+        run => subscribeRun(run, next.cursors[run.id] || 0)
+      );
+    } catch (e) {
+      setError(e.message || "加载对话失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [subscribeRun]);
+
+  React.useEffect(() => {
+    if (!currentUsername) { onRequestLogin?.(); return; }
+    let alive = true;
+    listConversations().then(async items => {
+      if (!alive) return;
+      setConversations(items);
+      if (items[0]) await loadConversation(items[0].id);
+      else setLoading(false);
+    }).catch(e => { setError(e.message); setLoading(false); });
+    return () => {
+      alive = false;
+      Object.values(abortsRef.current).forEach(abort => abort());
+    };
+  }, [currentUsername]); // eslint-disable-line
+
+  const newConversation = async () => {
+    try {
+      const created = await createConversation("新的旅行对话");
+      setConversations(previous => [created, ...previous]);
+      await loadConversation(created.id);
+    } catch (e) {
+      setError(e.message || "暂时无法新建对话");
+    }
+  };
+
+  React.useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(entries => {
+      setVisibleRunIds(previous => {
+        const next = new Set(previous);
+        entries.forEach(entry => {
+          const runId = entry.target.dataset.runId;
+          if (entry.isIntersecting) next.add(runId);
+          else next.delete(runId);
+        });
+        return next;
+      });
+      setObserverReady(true);
+    }, { root: document.querySelector(".chat-feed"), threshold: 0.3 });
+    Object.values(runNodesRef.current).filter(Boolean).forEach(node => observer.observe(node));
+    return () => observer.disconnect();
+  }, [activityItems.map(item => item.key).join("|")]);
+
+  const send = async () => {
+    const content = draft.trim();
+    if (!content) return;
+    if (composerTarget?.mode === "resume") {
+      const run = composerTarget.run;
+      const interaction = run.pending_interaction;
+      if (!interaction?.interaction_id) return;
+      setDraft("");
+      setError("");
+      try {
+        const resumed = await resumeRuntimeRun(run.id, interaction.interaction_id, content);
+        setState(previous => ({
+          ...previous,
+          runs: { ...previous.runs, [run.id]: { ...previous.runs[run.id], ...resumed } },
+        }));
+        setComposerTarget(null);
+      } catch (e) {
+        setDraft(content);
+        setError(e.message || "回复提交失败，请重试");
+      }
+      return;
+    }
+    let conversationId = activeId;
+    if (!conversationId) {
+      const created = await createConversation(content.slice(0, 20));
+      setConversations(previous => [created, ...previous]);
+      conversationId = created.id;
+      setActiveId(conversationId);
+    }
+    setDraft("");
+    setError("");
+    try {
+      const context = composerTarget?.mode === "revision"
+        ? { related_itinerary_id: composerTarget.itineraryId }
+        : {};
+      const result = await submitConversationMessage(conversationId, content, context);
+      setConversations(previous => previous.map(item => (
+        item.id === conversationId && (!item.title || item.title === "新的旅行对话")
+          ? { ...item, title: content.slice(0, 24), updated_at: new Date().toISOString() }
+          : item
+      )));
+      setState(previous => {
+        let next = ChatState.upsertMessage(previous, result.message);
+        next = { ...next, runs: { ...next.runs, [result.run.id]: result.run } };
+        return next;
+      });
+      subscribeRun(result.run);
+      setComposerTarget(null);
+    } catch (e) {
+      setDraft(content);
+      setError(e.message || "发送失败");
+    }
+  };
+
+  const refreshBrief = brief => {
+    setState(previous => ({
+      ...previous,
+      briefs: { ...previous.briefs, [brief.id]: brief },
+    }));
+  };
+
+  const submitBrief = async brief => {
+    const result = await submitPlanningBrief(brief.id);
+    refreshBrief(result.brief);
+    setState(previous => ({
+      ...previous,
+      runs: { ...previous.runs, [result.run.id]: result.run },
+    }));
+    subscribeRun(result.run);
+  };
+
+  const discardBrief = async brief => {
+    const result = await discardPlanningBrief(brief.id);
+    refreshBrief(result);
+  };
+
+  const controlRun = async (run, action) => {
+    try {
+      const result = action === "cancel"
+        ? await cancelRuntimeRun(run.id)
+        : await retryRuntimeRun(run.id);
+      setState(previous => ({
+        ...previous,
+        runs: { ...previous.runs, [result.id]: result },
+      }));
+      if (action === "retry") subscribeRun(result);
+    } catch (e) {
+      setError(e.message || "操作失败");
+    }
+  };
+
+  const focusRun = runId => {
+    const node = runNodesRef.current[runId];
+    if (!node) return;
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => node.focus(), 350);
+  };
+
+  React.useEffect(() => {
+    if (!loading && activeId && !composerTarget) composerRef.current?.focus();
+  }, [loading, activeId]); // eslint-disable-line
+
+  React.useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
+
+  React.useEffect(() => {
+    const waiting = new Set(
+      runList.filter(run => run.status === "waiting_user").map(run => run.id)
+    );
+    const newlyWaiting = [...waiting].find(id => !waitingRunsRef.current.has(id));
+    waitingRunsRef.current = waiting;
+    if (newlyWaiting) window.setTimeout(() => focusRun(newlyWaiting), 0);
+  }, [runList.map(run => `${run.id}:${run.status}`).join("|")]); // eslint-disable-line
+
+  const registerRunNode = (runId, node) => {
+    if (node) runNodesRef.current[runId] = node;
+    else delete runNodesRef.current[runId];
+  };
+
+  const offscreenRuns = observerReady
+    ? activeRuns.filter(run => !visibleRunIds.has(run.id))
+    : [];
+
+  return (
+    <div className="chat-shell page-fade">
+      <aside className={`chat-sidebar ${sidebarOpen ? "open" : ""}`} aria-label="旅行对话列表">
+        <div className="chat-sidebar-head">
+          <div><small>MY JOURNEYS</small><strong>旅行对话</strong></div>
+          <button onClick={newConversation} aria-label="创建新旅行对话">＋ 新对话</button>
+        </div>
+        <div className="conversation-list">
+          {conversations.map(item => (
+            <button key={item.id}
+              className={`conversation-item ${activeId === item.id ? "active" : ""}`}
+              onClick={() => loadConversation(item.id)}>
+              <span>{item.title || "未命名对话"}</span>
+              <small>{new Date(item.updated_at).toLocaleDateString()}</small>
+            </button>
+          ))}
+        </div>
+      </aside>
+      <main className="chat-main">
+        <div className="chat-header">
+          <button className="chat-sidebar-toggle" onClick={() => setSidebarOpen(value => !value)}
+            aria-expanded={sidebarOpen} aria-label="打开旅行对话列表">☰</button>
+          <div className="chat-title-copy">
+            <h2>和途途聊旅行</h2>
+            <p>问一个旅行问题，或把一个模糊念头慢慢变成可出发的行程。</p>
+          </div>
+          <div className="chat-guide" role="img" aria-label="途途，旅行向导">
+            <span className="guide-sun" aria-hidden="true" />
+            <span className="guide-map" aria-hidden="true" />
+            <span className="guide-hat" aria-hidden="true" />
+            <span className="guide-face" aria-hidden="true"><i /><i /></span>
+          </div>
+          {activeRuns.length > 0 && <span className="chat-task-count">{activeRuns.length} 个旅程在进行</span>}
+        </div>
+        <div className="chat-feed" role="log" aria-label="旅行对话活动" aria-live="off">
+          {loading && <div className="chat-empty">正在恢复对话…</div>}
+          {!loading && activityItems.length === 0 && (
+            <div className="chat-empty">
+              <span className="chat-empty-kicker">START WITH A THOUGHT</span>
+              <strong>从一个念头，走到一份行程</strong>
+              <span>可以先随便问问，也可以直接告诉我你想去哪里。</span>
+              <div className="chat-empty-prompts">
+                <button onClick={() => setDraft("十月适合去云南吗？")}>聊聊灵感<small>十月适合去云南吗？</small></button>
+                <button onClick={() => setDraft("帮我规划去云南旅行")}>开始规划<small>帮我规划去云南旅行</small></button>
+              </div>
+            </div>
+          )}
+          <ActivityTimeline
+            items={activityItems}
+            currentUsername={currentUsername}
+            onBriefUpdate={refreshBrief}
+            onBriefSubmit={submitBrief}
+            onBriefDiscard={discardBrief}
+            onRunCancel={run => controlRun(run, "cancel")}
+            onRunRetry={run => controlRun(run, "retry")}
+            onChatRetry={run => controlRun(run, "retry")}
+            onRunOpen={run => run.result_itinerary_id && onOpenPlan?.(run.result_itinerary_id)}
+            onRunModify={run => {
+              setComposerTarget({
+                mode: "revision",
+                itineraryId: run.result_itinerary_id,
+                label: `${run.request_snapshot?.destination || "这份行程"} · 继续修改`,
+              });
+              setDraft("");
+            }}
+            onRunReply={run => {
+              setComposerTarget({ mode: "resume", run, label: `${run.request_snapshot?.destination || "规划任务"} · 回复` });
+              setDraft("");
+            }}
+            registerRunNode={registerRunNode}
+          />
+        </div>
+        <div className="chat-status-live" aria-live="polite" aria-atomic="true">
+          {runList.find(run => run.status === "waiting_user")
+            ? "有一项旅行规划需要你的回复"
+            : runList.find(run => run.status === "failed")
+              ? "有一项旅行规划未能完成"
+              : ""}
+        </div>
+        {error && <div ref={errorRef} tabIndex="-1" className="chat-error" role="alert">{error}</div>}
+        {offscreenRuns.length > 0 && (
+          <div className="active-run-rail" aria-label="视口外的活动任务">
+            {offscreenRuns.slice(0, 3).map(run => (
+              <button key={run.id} onClick={() => focusRun(run.id)}>
+                <span>{run.status === "waiting_user" ? "需要回复" : run.status === "queued" ? "等待开始" : "正在规划"}</span>
+                <strong>{run.request_snapshot?.destination || (run.kind === "revision" ? "行程修改" : "旅行规划")}</strong>
+                <span aria-hidden="true">↗</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="chat-composer-wrap">
+          <div className="chat-composer">
+            {composerTarget && (
+              <div className="composer-target">
+                <span>{composerTarget.mode === "resume" ? "正在回复任务" : "正在修改行程"}</span>
+                <strong>{composerTarget.label}</strong>
+                <button onClick={() => setComposerTarget(null)} aria-label="取消指定任务回复">×</button>
+              </div>
+            )}
+            <textarea ref={composerRef} value={draft} onChange={e => setDraft(e.target.value)}
+              aria-label={composerTarget ? composerTarget.label : "给途途发送消息"}
+              placeholder={composerTarget?.mode === "resume" ? "补充所需信息…" : composerTarget?.mode === "revision" ? "说说你想怎么调整…" : "继续聊天，或描述一趟想规划的旅行…"}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault(); send();
+                }
+              }} />
+            <button className="composer-send" onClick={send} disabled={!draft.trim()} aria-label="发送消息">
+              <span aria-hidden="true">↑</span>
+              <span className="composer-send-label">发送</span>
+            </button>
+          </div>
+          <small className="composer-hint">{composerTarget ? "这条内容会发送到指定任务" : "规划会在后台继续，你可以放心离开或接着聊天"}</small>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function ActivityTimeline({
+  items, currentUsername,
+  onBriefUpdate, onBriefSubmit, onBriefDiscard,
+  onRunCancel, onRunRetry, onRunOpen, onRunModify, onRunReply, onChatRetry,
+  registerRunNode,
+}) {
+  return items.map(item => {
+    if (item.type === "message") {
+      const message = item.entity;
+      return (
+        <article key={item.key} className={`chat-message ${message.role}`} aria-label={message.role === "user" ? "你的消息" : "途途的回复"}>
+          <div className="chat-avatar" aria-hidden="true">{message.role === "user" ? currentUsername?.slice(-1) : "途"}</div>
+          <div className="chat-bubble">
+            {message.role === "assistant"
+              ? <ChatMessageContent content={message.content} />
+              : message.content}
+            {message.streaming && <span className="typing-caret" aria-hidden="true" />}
+          </div>
+        </article>
+      );
+    }
+    if (item.type === "brief") {
+      return (
+        <PlanningBriefCard
+          key={item.key}
+          brief={item.entity}
+          onUpdate={onBriefUpdate}
+          onSubmit={() => onBriefSubmit(item.entity)}
+          onDiscard={() => onBriefDiscard(item.entity)}
+        />
+      );
+    }
+    if (item.type === "chat_thinking") {
+      const isQueued = item.entity.status === "queued";
+      return (
+        <article key={item.key} className="chat-thinking" role="status" aria-live="polite">
+          <div className="chat-avatar" aria-hidden="true">途</div>
+          <div className="chat-thinking-body">
+            <span className="chat-thinking-kicker">{isQueued ? "收到，正在接住这句话" : "途途正在思考"}</span>
+            <strong>{isQueued ? "正在准备理解你的旅行想法…" : "正在梳理目的地、日期和你的偏好…"}</strong>
+            <span className="chat-thinking-dots" aria-hidden="true"><i /><i /><i /></span>
+          </div>
+        </article>
+      );
+    }
+    if (item.type === "chat_failure") {
+      const run = item.entity;
+      return (
+        <section key={item.key} className="chat-understanding-failure" role="alert">
+          <strong>这条消息暂时没有理解成功</strong>
+          <p>{run.error_public?.message || "请重试"}</p>
+          <button onClick={() => onChatRetry(run)}>重试这条消息</button>
+        </section>
+      );
+    }
+    const run = item.entity;
+    return (
+      <RuntimeRunCard
+        key={item.key}
+        refNode={node => registerRunNode(run.id, node)}
+        run={run}
+        onCancel={() => onRunCancel(run)}
+        onRetry={() => onRunRetry(run)}
+        onOpen={() => onRunOpen(run)}
+        onModify={() => onRunModify(run)}
+        onReply={() => onRunReply(run)}
+      />
+    );
+  });
+}
+
+function ChatMessageContent({ content }) {
+  const renderInline = (text, keyPrefix) => {
+    const parts = String(text || "").split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, index) => {
+      const match = part.match(/^\*\*(.+)\*\*$/);
+      return match
+        ? <strong key={`${keyPrefix}-${index}`}>{match[1]}</strong>
+        : <React.Fragment key={`${keyPrefix}-${index}`}>{part}</React.Fragment>;
+    });
+  };
+
+  const lines = String(content || "").split(/\r?\n/);
+  return (
+    <div className="chat-message-content">
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <span className="chat-message-space" key={index} aria-hidden="true" />;
+        const numberedHeading = trimmed.match(/^\*\*(\d+\.\s+.+)\*\*$/);
+        if (numberedHeading) {
+          return <h4 key={index}>{numberedHeading[1]}</h4>;
+        }
+        if (/^[-•]\s+/.test(trimmed)) {
+          return (
+            <div className="chat-message-list-item" key={index}>
+              <span aria-hidden="true">•</span>
+              <p>{renderInline(trimmed.replace(/^[-•]\s+/, ""), `line-${index}`)}</p>
+            </div>
+          );
+        }
+        return <p key={index}>{renderInline(trimmed, `line-${index}`)}</p>;
+      })}
+    </div>
+  );
+}
+
+function PlanningBriefCard({ brief, onUpdate, onSubmit, onDiscard }) {
+  const [editing, setEditing] = React.useState(false);
+  const [form, setForm] = React.useState(brief.data || {});
+  const [busy, setBusy] = React.useState("");
+  const [localError, setLocalError] = React.useState("");
+  const editable = ["collecting", "ready"].includes(brief.status);
+  React.useEffect(() => setForm(brief.data || {}), [brief.data]);
+  const persistForm = async () => {
+    const updated = await updatePlanningBrief(brief.id, {
+      ...form,
+      days: form.days ? Number(form.days) : undefined,
+    });
+    onUpdate(updated);
+    return updated;
+  };
+  const save = async () => {
+    setBusy("save"); setLocalError("");
+    try {
+      await persistForm();
+      setEditing(false);
+    } catch (e) {
+      setLocalError(e.message || "需求保存失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const saveAndSubmit = async () => {
+    if (busy) return;
+    setBusy("submit"); setLocalError("");
+    try {
+      const current = editing ? await persistForm() : brief;
+      if (current.status !== "ready") {
+        setEditing(true);
+        setLocalError("信息尚未完整，请补齐提示的内容后再开始规划。");
+        return;
+      }
+      setEditing(false);
+      await onSubmit(current);
+    } catch (e) {
+      setLocalError(e.message || "保存或创建规划任务失败，请重试");
+    } finally {
+      setBusy("");
+    }
+  };
+  const fields = [
+    ["destination", "目的地", "text"],
+    ["start_date", "开始日期", "date"],
+    ["end_date", "结束日期", "date"],
+    ["days", "天数", "number"],
+    ["attraction_preference", "景点偏好", "text"],
+    ["budget", "预算偏好", "text"],
+    ["food_preference", "餐饮偏好", "text"],
+    ["habit_preference", "旅行节奏与习惯", "text"],
+  ];
+  const view = ChatState.briefViewModel(brief);
+  const runAction = async (name, action) => {
+    if (busy) return;
+    setBusy(name); setLocalError("");
+    try { await action(); }
+    catch (e) { setLocalError(e.message || "操作失败，请重试"); }
+    finally { setBusy(""); }
+  };
+  return (
+    <section className={`brief-card ${brief.status}`} aria-labelledby={`brief-title-${brief.id}`}>
+      <div className="brief-head">
+        <div>
+          <span>TRIP NOTE</span>
+          <strong id={`brief-title-${brief.id}`}>这趟旅行，我理解的是</strong>
+        </div>
+        <em>{ChatState.planningBriefStatusLabel(brief.status)}</em>
+        {editable && (
+          <button disabled={!!busy} onClick={() => setEditing(value => !value)}>{editing ? "收起编辑" : "调整"}</button>
+        )}
+      </div>
+      {editing ? (
+        <div className="brief-grid">
+          {fields.map(([key, label, type]) => (
+            <label key={key}>{label}
+              <input
+                type={type}
+                value={form[key] || ""}
+                onChange={e => setForm({ ...form, [key]: e.target.value })}
+              />
+            </label>
+          ))}
+          <button className="brief-save" disabled={!!busy} onClick={save}>{busy === "save" ? "保存中…" : "保存这份理解"}</button>
+        </div>
+      ) : (
+        <div className="brief-summary">
+          <div className="brief-destination">
+            <span>目的地</span>
+            <strong>{view.destination}</strong>
+          </div>
+          <div className="brief-date">
+            <span>出行时间</span>
+            <strong>{view.dateLabel}</strong>
+          </div>
+          {view.preferences.length > 0 && (
+            <dl className="brief-preferences">
+              {view.preferences.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+            </dl>
+          )}
+          {view.usesDefaults && (
+            <p className="brief-defaults">没有特别说明的预算、餐饮或节奏偏好，将采用舒适均衡的推荐方案。</p>
+          )}
+        </div>
+      )}
+      {brief.missing_fields?.length > 0 && (
+        <div className="brief-missing">
+          <span>下一步只需要</span>
+          <strong>{view.missing.join("、")}</strong>
+        </div>
+      )}
+      {localError && <p className="brief-error" role="alert">{localError}</p>}
+      <div className="brief-actions">
+        {editable ? (
+          <>
+            <button className="brief-discard" disabled={!!busy}
+              onClick={() => runAction("discard", onDiscard)}>
+              {busy === "discard" ? "清除中…" : "清除这份需求"}
+            </button>
+            <button className="brief-submit" disabled={(!editing && brief.status !== "ready") || !!busy}
+              onClick={saveAndSubmit}>
+              {busy === "submit" ? "正在保存并创建任务…" : editing ? "保存并开始规划" : "确认，开始规划"}
+            </button>
+          </>
+        ) : (
+          <span className="brief-submitted-note">正式规划任务已创建</span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function StructuredInteractionInput({ interaction, disabled, onSubmit }) {
+  const schema = interaction?.input_schema || {};
+  const question = interaction?.question || "";
+  const inputKind = ChatState.interactionInputKind(interaction);
+  const isDateRange = inputKind === "date-range";
+  const choices = Array.isArray(schema.enum) ? schema.enum : [];
+  const multiChoices = schema.type === "array" && Array.isArray(schema.items?.enum)
+    ? schema.items.enum : [];
+  const [text, setText] = React.useState("");
+  const [startDate, setStartDate] = React.useState("");
+  const [endDate, setEndDate] = React.useState("");
+  const [selected, setSelected] = React.useState([]);
+  const [inputError, setInputError] = React.useState("");
+  const submit = () => {
+    let value = text.trim();
+    if (isDateRange) {
+      if (!startDate || !endDate) { setInputError("请选择开始和结束日期"); return; }
+      if (endDate < startDate) { setInputError("结束日期不能早于开始日期"); return; }
+      value = `${startDate} 至 ${endDate}`;
+    } else if (choices.length) {
+      if (!text) { setInputError("请选择一个选项"); return; }
+      value = text;
+    } else if (multiChoices.length) {
+      if (!selected.length) { setInputError("请至少选择一项"); return; }
+      value = selected;
+    }
+    if (!value || (Array.isArray(value) && !value.length)) { setInputError("请补充信息后继续"); return; }
+    setInputError("");
+    onSubmit(value);
+  };
+  return (
+    <div className="interaction-input">
+      {isDateRange ? (
+        <div className="date-range-input">
+          <label>开始日期<input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
+          <span aria-hidden="true">→</span>
+          <label>结束日期<input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
+        </div>
+      ) : choices.length ? (
+        <div className="choice-input" role="radiogroup" aria-label={question}>
+          {choices.map(choice => (
+            <label key={choice}><input type="radio" name={`interaction-${interaction.interaction_id}`}
+              checked={text === choice} onChange={() => setText(choice)} />{choice}</label>
+          ))}
+        </div>
+      ) : multiChoices.length ? (
+        <div className="choice-input" aria-label={question}>
+          {multiChoices.map(choice => (
+            <label key={choice}><input type="checkbox" checked={selected.includes(choice)}
+              onChange={() => setSelected(values => values.includes(choice) ? values.filter(item => item !== choice) : [...values, choice])} />{choice}</label>
+          ))}
+        </div>
+      ) : (
+        <textarea value={text} onChange={e => setText(e.target.value)} placeholder="补充信息后继续" aria-label="任务所需补充信息" />
+      )}
+      {inputError && <p className="interaction-error" role="alert">{inputError}</p>}
+      <button className="run-primary" disabled={disabled} onClick={submit}>{disabled ? "提交中…" : "提交并继续规划"}</button>
+    </div>
+  );
+}
+
+function RuntimeRunCard({ run, onCancel, onRetry, onOpen, onModify, onReply, refNode }) {
+  const [busy, setBusy] = React.useState("");
+  const [resultSummary, setResultSummary] = React.useState(null);
+  const [localError, setLocalError] = React.useState("");
+  const presentation = ChatState.RUN_PRESENTATIONS[run.status] || {
+    label: run.status, copy: "", primaryAction: null,
+  };
+  const interaction = run.pending_interaction;
+  const target = run.request_snapshot?.destination
+    || (run.kind === "revision" ? "已有行程" : "新的旅行");
+  const journeyIndex = run.status === "succeeded"
+    ? JOURNEY_STEPS.length - 1
+    : Math.max(-1, Number(run.journey_step_index ?? -1));
+  const journeyActiveNode = run.status === "succeeded"
+    ? null
+    : JOURNEY_STEPS[journeyIndex]?.key;
+  const journeyDoneNodes = run.status === "succeeded"
+    ? JOURNEY_STEPS.map(step => step.key)
+    : JOURNEY_STEPS.slice(0, Math.max(0, journeyIndex)).map(step => step.key);
+  const planningHeadings = {
+    queued: `正在准备 ${target} 的规划`,
+    running: `正在为你规划 ${target} 之旅`,
+    waiting_user: `${target} 的规划等你补充`,
+    succeeded: `${target} 的行程已经准备好`,
+    failed: `${target} 的规划暂未完成`,
+    cancelled: `${target} 的规划已停止`,
+  };
+  const revisionHeadings = {
+    queued: `正在准备修改 ${target} 行程`,
+    running: `正在修改 ${target} 行程`,
+    waiting_user: `${target} 行程修改等你补充`,
+    succeeded: `${target} 的新版行程已准备好`,
+    failed: `${target} 行程修改暂未完成`,
+    cancelled: `${target} 行程修改已停止`,
+  };
+  const heading = (run.kind === "revision" ? revisionHeadings : planningHeadings)[run.status]
+    || `${target} · ${presentation.label}`;
+  React.useEffect(() => {
+    if (run.status !== "succeeded" || !run.result_itinerary_id || resultSummary) return;
+    let alive = true;
+    getHistoryItem(run.result_itinerary_id).then(data => {
+      if (!alive || !data) return;
+      const plan = data.plan || data;
+      setResultSummary({
+        destination: plan.destination || run.request_snapshot?.destination || "旅行行程",
+        days: Array.isArray(plan.days) ? plan.days.length : (plan.days || run.request_snapshot?.days),
+        startDate: plan.travel_start_date || plan.start_date || run.request_snapshot?.start_date,
+        endDate: plan.travel_end_date || plan.end_date || run.request_snapshot?.end_date,
+      });
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [run.status, run.result_itinerary_id]); // eslint-disable-line
+  const action = async (name, fn) => {
+    if (busy) return;
+    setBusy(name); setLocalError("");
+    try { await fn(); }
+    catch (e) { setLocalError(e.message || "操作失败，请重试"); }
+    finally { setBusy(""); }
+  };
+  return (
+    <section ref={refNode} data-run-id={run.id} tabIndex="-1"
+      className={`run-card status-${run.status}`} aria-labelledby={`run-title-${run.id}`}>
+      <div className="run-journey-head">
+        <div>
+          <span>{run.kind === "revision" ? "ITINERARY REVISION" : "MULTI-AGENT JOURNEY"}</span>
+          <h3 id={`run-title-${run.id}`}>{heading}</h3>
+        </div>
+        <strong className="run-status-badge">{presentation.label}</strong>
+      </div>
+      <p className="run-status-copy">{presentation.copy}</p>
+      {["queued", "running", "waiting_user", "succeeded"].includes(run.status) && (
+        <div className="run-journey-progress" aria-label="规划进度">
+          <div className="run-journey-scene" aria-hidden="true">
+            <JourneyLoading
+              steps={JOURNEY_STEPS}
+              activeNode={journeyActiveNode}
+              doneNodes={journeyDoneNodes}
+            />
+          </div>
+          <div className="run-journey-steps">
+            {JOURNEY_STEPS.map((step, index) => {
+              const complete = run.status === "succeeded" || index < journeyIndex;
+              const active = run.status !== "succeeded" && index === journeyIndex;
+              return (
+                <div key={step.key} className={`run-journey-step ${complete ? "done" : ""} ${active ? "active" : ""}`}>
+                  <span className="run-journey-marker">{complete ? "✓" : index + 1}</span>
+                  <span>
+                    <strong>{step.label}</strong>
+                    <small>{
+                      complete
+                        ? (step.doneDetail || step.detail)
+                        : active && run.latest_progress_label
+                          ? run.latest_progress_label
+                          : step.detail
+                    }</small>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {run.request_snapshot?.related_itinerary_id && (
+        <p className="run-context">这是一项针对已有行程的独立修改，不会覆盖原版本。</p>
+      )}
+      {run.retry_of_run_id && <p className="run-context">这是上一次未完成任务的新尝试，原任务记录仍然保留。</p>}
+      {run.error_public?.message && <p className="run-error" role="alert">{run.error_public.message}</p>}
+      {run.status === "waiting_user" && interaction?.question && (
+        <div className="run-question">
+          <span>规划需要确认一件事</span>
+          <strong>{interaction.question}</strong>
+          <StructuredInteractionInput interaction={interaction} disabled={busy === "resume"}
+            onSubmit={value => action("resume", async () => {
+              await resumeRuntimeRun(run.id, interaction.interaction_id, value);
+            })} />
+          <button className="run-inline-reply" onClick={onReply}>也可以在下方输入框回复</button>
+        </div>
+      )}
+      {run.status === "succeeded" && (
+        <div className="run-result-preview">
+          <span>YOUR ITINERARY</span>
+          <strong>{resultSummary?.destination || target}</strong>
+          <p>
+            {resultSummary?.days ? `${resultSummary.days} 天` : "完整行程"}
+            {resultSummary?.startDate && resultSummary?.endDate ? ` · ${resultSummary.startDate} — ${resultSummary.endDate}` : ""}
+          </p>
+          <small>路线、开放时间、餐饮与游玩提示已整理</small>
+        </div>
+      )}
+      {localError && <p className="run-error" role="alert">{localError}</p>}
+      <div className="run-actions">
+        {["queued", "running", "waiting_user"].includes(run.status) && (
+          <button className="run-secondary" disabled={!!busy} onClick={() => action("cancel", onCancel)}>
+            {busy === "cancel" ? "正在停止…" : "停止规划"}
+          </button>
+        )}
+        {["failed", "cancelled"].includes(run.status) && (
+          <button className="run-primary" disabled={!!busy} onClick={() => action("retry", onRetry)}>
+            {busy === "retry" ? "正在创建新任务…" : "使用原需求再试一次"}
+          </button>
+        )}
+        {run.status === "succeeded" && run.result_itinerary_id && (
+          <>
+            <button className="run-secondary" onClick={onModify}>继续修改</button>
+            <button className="run-primary" onClick={onOpen}>打开完整行程</button>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
 /* ── 主页（新建规划） ─────────────────────────── */
 function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady, modifyTrigger, onCancelModify, onManageProfile }) {
   const [phase, setPhase] = React.useState("idle");
@@ -1229,6 +2069,182 @@ function SweepPreviewPage() {
           <div>先运行 <code>python -m tests.eval.sweep --dest 北京 --pref history --k 1 --no-judge</code></div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── 首页（产品介绍落地页） ──────────────────────── */
+function HomePage({ onStart }) {
+  const videoRef = React.useRef(null);
+
+  // 自动播放兜底：标签 autoplay 在部分浏览器被拦截时，手动 play；返回前台/首次交互再试
+  React.useEffect(() => {
+    const play = () => { videoRef.current?.play?.().catch(() => {}); };
+    play();
+    const onVisible = () => { if (!document.hidden) play(); };
+    const onPointer = () => { play(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pointerdown", onPointer, { once: true });
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pointerdown", onPointer);
+    };
+  }, []);
+
+  const viewAbilities = () =>
+    document.getElementById("home-abilities")?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  return (
+    <div className="home-page page-fade">
+      <main className="hero-shell">
+        <div className="video-poster" aria-hidden="true"></div>
+        <video
+          ref={videoRef}
+          className="hero-video"
+          autoPlay loop muted playsInline preload="auto"
+          poster="https://images.unsplash.com/photo-1557683316-973673baf926?w=1600&q=60"
+        >
+          <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260424_064411_9e9d7f84-9277-41f4-ab10-59172d89e6be.mp4" type="video/mp4" />
+        </video>
+
+        <section className="home-hero" id="start">
+          <div className="hero-copy">
+            <div className="hero-eyebrow">AI Travel Planner · Product Intro</div>
+            <h1>你只管<br />期待出发。</h1>
+            <p className="hero-lede">
+              从灵感到出发，途见帮你把复杂的旅行决策变成一份真正可执行的计划。<br />
+              多位 AI Agent 协同完成景点检索、路线编排、餐饮建议、天气参考与交通校验，<br />
+              在几分钟内生成清晰、好读、可落地的旅行方案。
+            </p>
+            <div className="hero-actions">
+              <button className="go-btn" onClick={onStart}>立即开始规划 <span aria-hidden="true">→</span></button>
+              <button className="ghost-btn" onClick={viewAbilities}>查看产品能力</button>
+            </div>
+          </div>
+
+          <aside className="capability-panel" aria-label="规划能力">
+            <div className="panel-title">Planning Capabilities</div>
+            <div className="capability-list">
+              <article className="capability-item">
+                <span className="capability-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M16 20v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="10" cy="7" r="4" />
+                    <path d="M20 20v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M17 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                </span>
+                <span>
+                  <h2>多 Agent 协同规划</h2>
+                  <p>专业分工，高效协作</p>
+                </span>
+              </article>
+              <article className="capability-item">
+                <span className="capability-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                </span>
+                <span>
+                  <h2>自动校验路线与时间</h2>
+                  <p>时间、交通、天气智能校验</p>
+                </span>
+              </article>
+              <article className="capability-item">
+                <span className="capability-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M6 3h9l4 4v14H6z" />
+                    <path d="M14 3v5h5" />
+                    <path d="M9 13h6" />
+                    <path d="M9 17h6" />
+                  </svg>
+                </span>
+                <span>
+                  <h2>输出可执行行程</h2>
+                  <p>清晰、好读、可直接使用</p>
+                </span>
+              </article>
+            </div>
+          </aside>
+        </section>
+
+        <section className="features" id="home-abilities" aria-label="产品能力">
+          <div className="feature-grid">
+            <article className="feature-card">
+              <div className="feature-no">01</div>
+              <div className="feature-row">
+                <span className="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.4-3.4" />
+                  </svg>
+                </span>
+                <span>
+                  <h2>需求理解</h2>
+                  <p>识别目的地、天数、用户偏好</p>
+                </span>
+              </div>
+              <span className="card-arrow" aria-hidden="true">→</span>
+            </article>
+            <article className="feature-card">
+              <div className="feature-no">02</div>
+              <div className="feature-row">
+                <span className="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M6 18c3-7 9-5 12-12" />
+                    <path d="M7 7h.01" />
+                    <path d="M17 17h.01" />
+                    <path d="M8 7a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+                    <path d="M20 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+                  </svg>
+                </span>
+                <span>
+                  <h2>智能规划</h2>
+                  <p>拆解景点、交通、餐饮与节奏安排</p>
+                </span>
+              </div>
+              <span className="card-arrow" aria-hidden="true">→</span>
+            </article>
+            <article className="feature-card">
+              <div className="feature-no">03</div>
+              <div className="feature-row">
+                <span className="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M8 2v4" />
+                    <path d="M16 2v4" />
+                    <rect x="4" y="5" width="16" height="16" rx="2" />
+                    <path d="M8 13l3 3 5-6" />
+                  </svg>
+                </span>
+                <span>
+                  <h2>路线校验</h2>
+                  <p>结合时间、天气与通行方式优化行程</p>
+                </span>
+              </div>
+              <span className="card-arrow" aria-hidden="true">→</span>
+            </article>
+            <article className="feature-card">
+              <div className="feature-no">04</div>
+              <div className="feature-row">
+                <span className="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M6 3h9l4 4v14H6z" />
+                    <path d="M14 3v5h5" />
+                    <path d="M9 13h6" />
+                    <path d="M9 17h4" />
+                  </svg>
+                </span>
+                <span>
+                  <h2>结果交付</h2>
+                  <p>生成清晰、可执行、可编辑的旅游计划</p>
+                </span>
+              </div>
+              <span className="card-arrow" aria-hidden="true">→</span>
+            </article>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

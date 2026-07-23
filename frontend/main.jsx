@@ -9,16 +9,18 @@ const THEME_OPTIONS = [
   { value: "morning", label: "晨刊 · 暖纸" },
   { value: "celadon", label: "青瓷 · 临水" },
   { value: "night",   label: "夜航 · 墨蓝" },
+  { value: "sky",     label: "晴空 · 淡蓝" },
 ];
-const THEME_ICONS = { morning: "☀", celadon: "🍃", night: "🌙" };
+const THEME_ICONS = { morning: "☀", celadon: "🍃", night: "🌙", sky: "☁" };
 
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [page, setPage] = React.useState("plan");
+  const [page, setPage] = React.useState("chat");
   const [planKey, setPlanKey] = React.useState(0);
   const [authUser, setAuthUser] = React.useState(() => getAuth()?.username || null);
   const [showAuthModal, setShowAuthModal] = React.useState(false);
   const [authReason, setAuthReason] = React.useState("");
+  const [pendingAuthAction, setPendingAuthAction] = React.useState(null);
   const [showUserMenu, setShowUserMenu] = React.useState(false);
   // 行程详情页数据
   const [detailPlan, setDetailPlan] = React.useState(null);
@@ -35,6 +37,7 @@ function App() {
     // 处理 URL 参数
     const params = new URLSearchParams(window.location.search);
     if (params.get("login") === "1" && !getAuth()) {
+      setPendingAuthAction(NavigationState.chatTarget(false));
       setShowAuthModal(true);
       history.replaceState({}, "", "/");
     }
@@ -42,7 +45,12 @@ function App() {
     if (viewId) {
       history.replaceState({}, "", "/");
       const a = getAuth();
-      if (!a) { setShowAuthModal(true); return; }
+      if (!a) {
+        setPendingAuthAction(NavigationState.detailTarget(viewId));
+        setAuthReason("登录后继续打开这份行程");
+        setShowAuthModal(true);
+        return;
+      }
       getHistoryItem(viewId).then(data => {
         if (data?.plan) {
           const adapted = adaptPlan(data.plan, a.username);
@@ -118,8 +126,9 @@ function App() {
     if (detailPlan) { setPage("detail"); window.scrollTo({ top: 0 }); }
   };
 
-  const requestLogin = (reason = "请先登录再使用规划功能") => {
+  const requestLogin = (reason = "请先登录再继续", continuation = null) => {
     setAuthReason(reason);
+    setPendingAuthAction(continuation);
     setShowAuthModal(true);
   };
 
@@ -127,14 +136,38 @@ function App() {
     setAuthUser(username);
     setShowAuthModal(false);
     setAuthReason("");
+    const continuation = NavigationState.resolveAfterAuth(pendingAuthAction);
+    setPendingAuthAction(null);
+    if (!continuation) return;
+    if (continuation.page === "detail" && continuation.planId) {
+      getHistoryItem(continuation.planId).then(data => {
+        if (data?.plan) onOpenHistoryPlan(data.plan, continuation.planId);
+      }).catch(() => {});
+      return;
+    }
+    if (continuation.page === "chat") {
+      setPage("chat");
+      window.scrollTo({ top: 0 });
+    }
+  };
+
+  const openChat = () => {
+    if (!authUser) {
+      requestLogin(
+        "登录后继续你的旅行对话",
+        NavigationState.chatTarget(),
+      );
+      return;
+    }
+    setPage("chat");
+    window.scrollTo({ top: 0 });
   };
 
   const logout = () => {
     clearAuth();
     setAuthUser(null);
     setShowUserMenu(false);
-    setPage("plan");
-    setPlanKey(k => k + 1);
+    go("chat");
   };
 
   const onOpenHistoryPlan = (rawPlan, planId) => {
@@ -150,7 +183,7 @@ function App() {
   return (
     <div>
       <header className="topbar">
-        <div className="brand" onClick={() => go("plan")}>
+        <div className="brand" onClick={() => openChat()}>
           <div className="brand-glyph">途</div>
           <div>
             <div className="brand-name">途见 · AI 旅行规划</div>
@@ -158,13 +191,9 @@ function App() {
           </div>
         </div>
         <nav className="topnav">
-          <button className={`topnav-link ${page === "plan" ? "active" : ""}`} onClick={() => go("plan")}>
-            新建规划
-            {planPhase === "loading" && page !== "plan" && <span className="nav-planning-dot" title="规划进行中" />}
-          </button>
-          <button className={`topnav-link ${page === "detail" ? "active" : ""}`}
-            onClick={() => { if (detailPlan) { setPage("detail"); } else { go("plan"); } }}>
-            行程详情
+          <button className={`topnav-link ${page === "chat" ? "active" : ""}`}
+            onClick={openChat}>
+            旅行对话
           </button>
           <button className={`topnav-link ${page === "history" ? "active" : ""}`}
             onClick={() => { if (!authUser) { requestLogin("请先登录查看历史行程"); return; } go("history"); }}>
@@ -212,7 +241,7 @@ function App() {
         <AuthModal
           reason={authReason}
           onSuccess={onAuthSuccess}
-          onClose={() => { setShowAuthModal(false); setAuthReason(""); }}
+          onClose={() => { setShowAuthModal(false); setAuthReason(""); setPendingAuthAction(null); }}
         />
       )}
 
@@ -236,6 +265,17 @@ function App() {
           onRequestModify={onRequestModify}
           onRequestLogin={() => requestLogin()}
           currentUsername={authUser}
+        />
+      )}
+      {page === "chat" && (
+        <ChatPage
+          currentUsername={authUser}
+          onRequestLogin={() => requestLogin("登录后继续你的旅行对话", NavigationState.chatTarget())}
+          onOpenPlan={(planId) => {
+            getHistoryItem(planId).then(data => {
+              if (data?.plan) onOpenHistoryPlan(data.plan, planId);
+            });
+          }}
         />
       )}
       {page === "history" && (

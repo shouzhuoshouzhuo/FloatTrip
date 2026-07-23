@@ -139,11 +139,23 @@ def save_itinerary(
 ) -> str:
     plan_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    root_id = plan_id
+    version = 1
+    if parent_id:
+        parent = conn.execute(
+            "SELECT id,root_id,version FROM itineraries WHERE id=? AND user_id=?",
+            (parent_id, user_id),
+        ).fetchone()
+        if not parent:
+            raise ValueError("base itinerary not found or not owned by user")
+        root_id = parent["root_id"] or parent["id"]
+        version = int(parent["version"] or 1) + 1
     conn.execute(
         """INSERT INTO itineraries
            (id, user_id, parent_id, query, modification_notes,
-            destination, start_date, end_date, plan_json, planner_state_json, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            destination, start_date, end_date, plan_json, planner_state_json,
+            root_id, version, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             plan_id, user_id, parent_id, query, modification_notes,
             plan.get("destination", ""),
@@ -151,6 +163,8 @@ def save_itinerary(
             plan.get("end_date", ""),
             json.dumps(plan, ensure_ascii=False),
             json.dumps(planner_state, ensure_ascii=False) if planner_state else None,
+            root_id,
+            version,
             now,
         ),
     )
@@ -159,13 +173,18 @@ def save_itinerary(
 
 def load_itinerary(plan_id: str, conn: sqlite3.Connection) -> dict | None:
     row = conn.execute(
-        "SELECT plan_json, modification_notes, planner_state_json FROM itineraries WHERE id=?",
+        "SELECT id,parent_id,root_id,version,plan_json,modification_notes,planner_state_json "
+        "FROM itineraries WHERE id=?",
         (plan_id,),
     ).fetchone()
     if not row:
         return None
     return {
         "plan": json.loads(row["plan_json"]),
+        "id": row["id"],
+        "parent_id": row["parent_id"],
+        "root_id": row["root_id"] or row["id"],
+        "version": int(row["version"] or 1),
         "modification_notes": row["modification_notes"],
         "planner_state": json.loads(row["planner_state_json"]) if row["planner_state_json"] else None,
     }
@@ -218,7 +237,7 @@ def update_plan_json(plan_id: str, user_id: str, new_plan: dict, conn: sqlite3.C
 
 def list_itineraries(user_id: str, conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
-        """SELECT id, parent_id, destination, start_date, end_date, created_at
+        """SELECT id, parent_id, root_id, version, destination, start_date, end_date, created_at
            FROM itineraries WHERE user_id=? ORDER BY created_at DESC LIMIT 50""",
         (user_id,),
     ).fetchall()

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import urllib.parse
 from typing import Any
 
 from app.core.cache import get_cached, set_cached, poi_cache_key, POI_TTL
-from app.core.http import http_get_json
+from app.core.http import http_get_json, http_get_json_async
 from app.providers.amap.client import (
     AMAP_AROUND_SEARCH_URL,
     AMAP_RATE_LIMIT_INFOS,
@@ -31,6 +32,19 @@ def _text_search_raw(url: str) -> list[dict[str, Any]]:
         if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
             raise RuntimeError(f"高德搜索失败：{info}")
         time.sleep(1.2 * (attempt + 1))
+    return []
+
+
+async def _text_search_raw_async(url: str) -> list[dict[str, Any]]:
+    for attempt in range(4):
+        data = await http_get_json_async(url)
+        if data.get("status") == "1":
+            pois = data.get("pois", [])
+            return pois if isinstance(pois, list) else []
+        info = str(data.get("info") or "未知错误")
+        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= 3:
+            raise RuntimeError(f"高德搜索失败：{info}")
+        await asyncio.sleep(1.2 * (attempt + 1))
     return []
 
 
@@ -76,6 +90,42 @@ def search_around_pois(
     return []
 
 
+async def search_around_pois_async(
+    location: dict[str, float],
+    api_key: str,
+    *,
+    types: str = "",
+    keyword: str = "",
+    radius: int = 1000,
+    offset: int = 6,
+    max_retries: int = 3,
+) -> list[dict[str, Any]]:
+    params = {
+        "key": api_key,
+        "location": f"{location['lng']},{location['lat']}",
+        "radius": str(radius),
+        "offset": str(offset),
+        "page": "1",
+        "extensions": "all",
+        "output": "json",
+    }
+    if types:
+        params["types"] = types
+    elif keyword:
+        params["keywords"] = keyword
+    url = f"{AMAP_AROUND_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+    for attempt in range(max_retries + 1):
+        data = await http_get_json_async(url)
+        if data.get("status") == "1":
+            pois = data.get("pois", [])
+            return pois if isinstance(pois, list) else []
+        info = str(data.get("info") or "未知错误")
+        if info not in AMAP_RATE_LIMIT_INFOS or attempt >= max_retries:
+            raise RuntimeError(f"高德周边搜索失败：{info}")
+        await asyncio.sleep(1.2 * (attempt + 1))
+    return []
+
+
 # ─── 景点关键字搜索 ──────────────────────────────────────────
 
 def search_attraction_pois(
@@ -109,6 +159,37 @@ def search_attraction_pois(
     pois = _text_search_raw(url)
     if page == 1 and pois:
         set_cached(cache_key, pois, POI_TTL)
+    return pois
+
+
+async def search_attraction_pois_async(
+    city: str,
+    api_key: str,
+    *,
+    keywords: str = "景点",
+    offset: int = 25,
+    page: int = 1,
+) -> list[dict[str, Any]]:
+    cache_key = poi_cache_key(city, keywords) if page == 1 else None
+    if cache_key is not None:
+        cached = await asyncio.to_thread(get_cached, cache_key)
+        if cached is not None:
+            return cached
+    params: dict[str, str] = {
+        "key": api_key,
+        "keywords": keywords,
+        "types": ATTRACTION_TYPE,
+        "city": city,
+        "citylimit": "true",
+        "offset": str(offset),
+        "page": str(page),
+        "extensions": "all",
+        "output": "json",
+    }
+    url = f"{AMAP_TEXT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+    pois = await _text_search_raw_async(url)
+    if page == 1 and pois:
+        await asyncio.to_thread(set_cached, cache_key, pois, POI_TTL)
     return pois
 
 
