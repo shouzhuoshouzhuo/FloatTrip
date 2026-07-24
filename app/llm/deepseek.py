@@ -11,7 +11,7 @@ from app.core.env import load_local_env
 from app.core.http import choose_http_proxy
 
 
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 _LEGACY_MODEL_ALIASES = {
     "deepseekv4flash": "deepseek-v4-flash",
@@ -30,6 +30,19 @@ def resolve_deepseek_model(model: str | None = None) -> str:
     return normalize_deepseek_model(chosen)
 
 
+def resolve_deepseek_base_url() -> str:
+    """Resolve an optional OpenAI-compatible DeepSeek endpoint override."""
+    return os.getenv("DEEPSEEK_BASE_URL", DEFAULT_DEEPSEEK_BASE_URL).strip().rstrip("/")
+
+
+def resolve_deepseek_proxy() -> str | None:
+    """Prefer a provider-specific proxy, then use the shared HTTP proxy setting."""
+    proxy = os.getenv("DEEPSEEK_HTTP_PROXY", "").strip()
+    if proxy.startswith(("http://", "https://")):
+        return proxy
+    return choose_http_proxy()
+
+
 def build_chat_deepseek(*, model: str | None = None, temperature: float = 0) -> Any:
     """创建未绑定 schema 的 DeepSeek ChatOpenAI 客户端。"""
     load_local_env()
@@ -42,11 +55,11 @@ def build_chat_deepseek(*, model: str | None = None, temperature: float = 0) -> 
     except ModuleNotFoundError as exc:
         raise RuntimeError("缺少 httpx 或 langchain-openai。请先安装依赖。") from exc
 
-    proxy = choose_http_proxy()
+    proxy = resolve_deepseek_proxy()
     return ChatOpenAI(
         model=resolve_deepseek_model(model),
         api_key=api_key,
-        base_url=DEEPSEEK_BASE_URL,
+        base_url=resolve_deepseek_base_url(),
         temperature=temperature,
         http_client=httpx.Client(proxy=proxy, trust_env=False),
         http_async_client=httpx.AsyncClient(proxy=proxy, trust_env=False),

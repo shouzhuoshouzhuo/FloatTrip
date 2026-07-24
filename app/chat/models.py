@@ -79,3 +79,10 @@ class DialogueUnderstandingError(RuntimeError):
 
     public_code = "dialogue_understanding_failed"
     public_message = "这条消息暂时没有理解成功，请重试"
+
+    def __init__(self, message: str | None = None, *, code: str | None = None):
+        super().__init__(message or self.public_message)
+        if message:
+            self.public_message = message
+        if code:
+            self.public_code = code

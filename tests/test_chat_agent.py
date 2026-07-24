@@ -285,3 +285,13 @@ class ChatAgentTests(unittest.IsolatedAsyncioTestCase):
             await dialogue_agent_node({"dialogue_context": self._context()}, llm=llm)
         self.assertEqual(raised.exception.public_message, "这条消息暂时没有理解成功，请重试")
         self.assertEqual(len(llm.calls), 2)
+
+    async def test_connection_failure_has_actionable_public_message(self):
+        class APIConnectionError(RuntimeError):
+            pass
+
+        llm = FakeStructuredLlm([APIConnectionError("offline"), APIConnectionError("offline")])
+        with self.assertRaises(DialogueUnderstandingError) as raised:
+            await dialogue_agent_node({"dialogue_context": self._context()}, llm=llm)
+        self.assertEqual(raised.exception.public_code, "llm_connection_failed")
+        self.assertIn("网络或代理", raised.exception.public_message)

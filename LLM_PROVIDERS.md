@@ -15,6 +15,8 @@
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=sk_xxxxxxxxxxxx
 # DEEPSEEK_MODEL=deepseek-v4-flash  # 可选，默认值已设置
+# DEEPSEEK_BASE_URL=https://api.deepseek.com  # 可选：兼容服务地址
+# DEEPSEEK_HTTP_PROXY=http://127.0.0.1:7890  # 可选：仅 DeepSeek 请求走代理
 ```
 
 **可用模型：**
@@ -125,7 +127,7 @@ RuntimeError: 缺少 DOUBAO_API_KEY。请在 .env.local 中配置后重试。
 ### 3. 连接失败
 
 如果遇到网络问题，可检查：
-- VPN/代理配置（参见 `HTTPS_PROXY` 环境变量）
+- VPN/代理配置（可设置 `DEEPSEEK_HTTP_PROXY`，或通用的 `HTTPS_PROXY` 环境变量）
 - API 端点是否可访问
 - 防火墙配置
 

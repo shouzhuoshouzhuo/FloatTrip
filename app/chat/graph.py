@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -10,6 +11,9 @@ from app.chat.models import DialogueDecision, DialogueUnderstandingError
 from app.chat.prompts import dialogue_messages
 from app.llm.factory import build_structured_llm
 from app.planning.helpers import ainvoke_structured
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChatState(TypedDict, total=False):
@@ -51,6 +55,23 @@ async def dialogue_agent_node(
                         "不要添加字段，也不要解释错误。",
                     ),
                 ]
+    error_name = type(last_error).__name__ if last_error else "UnknownError"
+    logger.warning("Dialogue understanding failed after schema repair: %s", error_name)
+    if error_name in {"APIConnectionError", "APITimeoutError"}:
+        raise DialogueUnderstandingError(
+            "暂时无法连接 AI 服务，请检查网络或代理配置后重试。",
+            code="llm_connection_failed",
+        ) from last_error
+    if error_name in {"AuthenticationError", "PermissionDeniedError"}:
+        raise DialogueUnderstandingError(
+            "AI 服务认证失败，请检查 DeepSeek API Key 配置。",
+            code="llm_authentication_failed",
+        ) from last_error
+    if error_name in {"BadRequestError", "NotFoundError", "UnprocessableEntityError"}:
+        raise DialogueUnderstandingError(
+            "AI 服务请求被拒绝，请检查 DeepSeek 模型和服务地址配置。",
+            code="llm_request_rejected",
+        ) from last_error
     raise DialogueUnderstandingError() from last_error
 
 

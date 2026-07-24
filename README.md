@@ -26,6 +26,8 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 - 🍜 **餐饮推荐** — 基于每天动线搜索周边餐厅，按天并行调用 LLM 推荐午晚餐
 - 🗺️ **地图可视化** — 前端接入高德 JS API，在半屏地图上逐天绘制行程动线与景点标注
 - ✍️ **手动编辑** — 对生成的行程可拖拽换序、搜索换点/换餐厅、改时段，带撤销/重做栈；保存时服务端重算逐段距离
+- 💬 **对话式规划** — 先通过多轮聊天澄清需求、生成可编辑的规划简报，再提交正式规划任务
+- ⚡ **事件驱动 Runtime** — Chat 与规划任务均以持久化 Run 执行，支持排队、SSE 进度回放、取消、重试和需要用户确认时的恢复
 - 🔌 **多 LLM 提供商** — 通过 `LLM_PROVIDER` 一键切换 DeepSeek / 豆包，统一工厂函数封装，缺 Key 时给出明确报错
 
 所有景点与餐厅数据均来自**高德真实 POI**，不会凭空捏造地点。
@@ -104,6 +106,11 @@ AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游
 [Finalize]  →  含时刻表 + 餐厅 + 距离的完整行程
 ```
 
+Chat 和正式规划分别使用独立并发容量；同一会话的 Chat 串行，同一基础行程的修改串行。
+Run 的生命周期、进度、交互请求与结果均会持久化，客户端可通过 SSE 在断线后继续回放事件。详见
+[`docs/agent-runtime.md`](docs/agent-runtime.md) 与
+[`docs/conversation-entry-migration.md`](docs/conversation-entry-migration.md)。
+
 **修改规划（迷你图）**：用户对已有行程提修改意见时，跳过 Intent/景点搜索，从上次规划的 checkpoint 恢复状态，只跑 `Planner ⇄ Reviewer（最多 2 轮）→ 餐饮 → Finalize`，Reviewer 验证 Planner 是否真正响应了修改意见（修改流程不接入 Time Check）。
 
 **技术栈**
@@ -151,6 +158,12 @@ DOUBAO_API_KEY=your_doubao_endpoint    # 豆包 endpoint ID（用 doubao 时必�
 AMAP_JS_KEY=your_amap_js_key           # 高德 JS API Key（可选，前端地图）
 AMAP_JS_SECURITY_CODE=your_js_secret   # 高德 JS API 安全密钥（可选，与 JS Key 配套）
 REDIS_URL=redis://localhost:6379/0     # Redis 缓存（可选，不填则跳过缓存，不影响功能）
+RUNTIME_CHAT_CONCURRENCY=8             # Chat Run 并发上限（可选）
+RUNTIME_PLANNING_CONCURRENCY=2         # 正式规划 / 修改的全局并发上限（可选）
+RUNTIME_PLANNING_PER_USER=2            # 单用户正式规划 / 修改并发上限（可选）
+RUNTIME_LLM_CONCURRENCY=8              # LLM 调用并发容量（可选）
+RUNTIME_AMAP_CONCURRENCY=8             # 高德调用并发容量（可选）
+RUNTIME_CHECKPOINT_DB=data/langgraph-checkpoints.db  # LangGraph checkpoint 文件（可选）
 ```
 
 > 多 LLM 提供商的详细配置、切换方式与故障排查见 [`LLM_PROVIDERS.md`](LLM_PROVIDERS.md)。
@@ -190,7 +203,8 @@ python run.py
 ```
 ├── app/
 │   ├── core/          # 环境变量加载、HTTP 工具、Redis 缓存层、SQLite、记忆、鉴权
-│   ├── api/           # 路由模块（auth/history/profile/plan，各带 prefix）
+│   ├── api/           # HTTP/SSE 路由（含 conversations、runs 和运行指标）
+│   ├── chat/          # 对话 Agent、对话图与规划简报服务
 │   ├── llm/           # LLM 工厂：factory.py（按 LLM_PROVIDER 分发）+ deepseek.py / doubao.py
 │   ├── providers/
 │   │   ├── amap/      # 高德地图 POI 搜索
@@ -201,6 +215,7 @@ python run.py
 │       ├── graph.py    # LangGraph 图构建与流水线入口
 │       ├── helpers.py  # 纯工具函数（地理计算、评审预检等）
 │       └── prompts.py  # 所有 LLM System Prompt
+│   └── runtime/        # Run 调度、持久化、事件流、恢复与可观测性
 ├── tests/
 │   ├── EVAL_GUIDE.md              # 评估框架使用手册
 │   ├── eval/                      # Planner/Reviewer 评估框架
@@ -268,6 +283,9 @@ Reviewer 不再负责开放时间检查（交给 Time Check）。`RouteReview` s
 
 **14. 偏好占位垃圾值清洗**
 LLM 在用户未提供偏好时偶尔吐出 `null`/`none`/`无`/`不限` 等占位垃圾值。`clean_pref` 仅在『整串』等于垃圾 token 时归一为"无偏好"（None），避免误伤"无辣不欢"这类正常偏好，统一作用于 intent 抽取与 query_rewrite 输出。
+
+**15. 持久化 Agent Runtime**
+对话和规划不再依赖单个 HTTP 请求的生命周期。Runtime 为每次操作创建持久化 Run：容量不足时安全排队，运行状态、进度、错误、交互请求和最终结果可查询并通过 SSE 回放；支持取消、重试和 LangGraph interrupt 恢复。当前实现适用于单节点部署，多节点部署边界见 [`docs/agent-runtime.md`](docs/agent-runtime.md)。
 
 ---
 
