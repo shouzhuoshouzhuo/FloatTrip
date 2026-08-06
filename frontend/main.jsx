@@ -15,7 +15,10 @@ const THEME_ICONS = { morning: "☀", celadon: "🍃", night: "🌙", sky: "☁"
 
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [page, setPage] = React.useState("chat");
+  const initialPathPage = window.location.pathname === "/profile"
+    ? "profile"
+    : window.location.pathname === "/history" ? "history" : "chat";
+  const [page, setPage] = React.useState(initialPathPage);
   const [planKey, setPlanKey] = React.useState(0);
   const [authUser, setAuthUser] = React.useState(() => getAuth()?.username || null);
   const [showAuthModal, setShowAuthModal] = React.useState(false);
@@ -36,6 +39,10 @@ function App() {
     }));
     // 处理 URL 参数
     const params = new URLSearchParams(window.location.search);
+    if (["profile", "history"].includes(initialPathPage) && !getAuth()) {
+      setAuthReason(initialPathPage === "profile" ? "请先登录管理旅行画像" : "请先登录查看历史行程");
+      setShowAuthModal(true);
+    }
     if (params.get("login") === "1" && !getAuth()) {
       setPendingAuthAction(NavigationState.chatTarget(false));
       setShowAuthModal(true);

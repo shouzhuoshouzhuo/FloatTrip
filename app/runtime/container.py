@@ -7,6 +7,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from app.chat.graph import build_chat_graph
+from app.chat.memory_service import MemoryExtractionWorker
 from app.chat.service import ChatService
 from app.core.http import close_async_http_client
 from app.planning.graph import build_graph, build_runtime_revision_graph
@@ -40,6 +41,7 @@ checkpointer: AsyncSqliteSaver | None = None
 chat_worker: GraphRuntimeWorker | None = None
 planning_worker: GraphRuntimeWorker | None = None
 revision_worker: GraphRuntimeWorker | None = None
+memory_worker = MemoryExtractionWorker(manager.db_path)
 _checkpoint_context = None
 
 
@@ -77,9 +79,11 @@ async def start_runtime() -> None:
     scheduler.register(RunKind.TRAVEL_PLAN, planning_worker)
     scheduler.register(RunKind.REVISION, revision_worker)
     await scheduler.start()
+    await memory_worker.start()
 
 
 async def stop_runtime() -> None:
+    await memory_worker.stop()
     await scheduler.stop()
     await close_async_http_client()
     if _checkpoint_context is not None:

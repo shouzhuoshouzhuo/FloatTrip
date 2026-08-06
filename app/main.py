@@ -30,27 +30,27 @@ from app.core.auth import decode_token
 from app.core.database import get_conn, init_db
 from app.core.env import load_local_env
 from app.core.memory import (
-    format_profile_for_prompt,
-    get_user_profile,
     load_itinerary,
     save_itinerary,
     save_pending_modification,
-    set_user_profile,
 )
+from app.core.travel_memory import MemoryRepository
 from app.core.thread_store import thread_store
 from app.planning.graph import run_modification_stream
 from app.planning.graph import run_stream as run_plan_stream
-from app.planning.profile_updater import run_profile_update_agent
 from app.api.auth_routes import router as auth_router
 from app.api.history_routes import router as history_router
 from app.api.profile_routes import router as profile_router
 from app.api.plan_routes import router as plan_router
 from app.api.sweep_routes import router as sweep_router
 from app.api.runtime_routes import router as runtime_router
-from app.runtime.container import start_runtime, stop_runtime
+from app.runtime.container import start_runtime, stop_runtime, chat_service
 from app.runtime.container import manager as runtime_manager
 from app.runtime.container import scheduler as runtime_scheduler
-from app.runtime.compat import create_legacy_run, legacy_events, resume_legacy_run
+from app.runtime.compat import (
+    create_legacy_run, legacy_events, legacy_parent_constraint_snapshot,
+    resume_legacy_run,
+)
 
 load_local_env()
 init_db()
@@ -156,6 +156,27 @@ async def create_plan_stream(req: PlanRequest, request: Request):
                 value=req.query,
             )
         else:
+            inherited = (
+                await asyncio.to_thread(
+                    legacy_parent_constraint_snapshot,
+                    runtime_manager,
+                    user_id,
+                    req.plan_id,
+                )
+                if req.plan_id and req.modification_notes else None
+            )
+            if inherited:
+                projected_snapshot = {**inherited, "constraint_snapshot_source": "parent_run"}
+            else:
+                revision, facts = await asyncio.to_thread(MemoryRepository().snapshot, user_id)
+                projected_snapshot = await chat_service.planning_memory.project_snapshot(
+                    {"query": req.query},
+                    revision=revision,
+                    facts=facts,
+                    fallback_source=("latest_profile_for_legacy_itinerary" if req.plan_id else "latest_profile"),
+                )
+                projected_snapshot["memory_profile_revision"] = revision
+                projected_snapshot["memory_profile_snapshot"] = facts
             run = await asyncio.to_thread(
                 create_legacy_run,
                 runtime_manager,
@@ -164,6 +185,7 @@ async def create_plan_stream(req: PlanRequest, request: Request):
                 overrides=overrides,
                 plan_id=req.plan_id,
                 modification_notes=req.modification_notes,
+                projected_snapshot=projected_snapshot,
             )
             runtime_scheduler.notify()
 
@@ -224,13 +246,6 @@ async def create_plan_stream(req: PlanRequest, request: Request):
                 modification_notes=req.modification_notes,
                 planner_state=planner_checkpoint,
             )
-            # visited_destinations 由代码维护（客观事实，不交给 LLM）
-            if state.destination:
-                profile = get_user_profile(user_id, conn)
-                dests = profile.get("visited_destinations", [])
-                if state.destination not in dests:
-                    dests = ([state.destination] + dests)[:20]
-                    set_user_profile(user_id, {**profile, "visited_destinations": dests}, conn)
         saved_plan_id.append(pid)
 
     # ── 4. 修改模式：走 checkpoint 迷你图 ────────────────────
@@ -276,9 +291,8 @@ async def create_plan_stream(req: PlanRequest, request: Request):
     # ── 5. 记忆注入：读取用户历史偏好 ────────────────────────
     profile_hint = ""
     if user_id:
-        with get_conn() as conn:
-            profile = get_user_profile(user_id, conn)
-        profile_hint = format_profile_for_prompt(profile)
+        _revision, facts = MemoryRepository().snapshot(user_id)
+        profile_hint = MemoryRepository.format_for_prompt(facts)
 
     # ── 6. 普通规划流 ─────────────────────────────────────────
     async def gen():
@@ -296,9 +310,6 @@ async def create_plan_stream(req: PlanRequest, request: Request):
                 # 成功时追加 plan_id，并触发异步画像更新（只看 raw query，不看改写后的）
                 if ev.get("type") == "result" and ev.get("success") and saved_plan_id:
                     ev["plan_id"] = saved_plan_id[0]
-                    asyncio.create_task(
-                        run_profile_update_agent(user_id, query, overrides.get("model_name"))
-                    )
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001
             err = {"type": "error", "message": str(e)}
@@ -320,19 +331,35 @@ async def create_plan_stream(req: PlanRequest, request: Request):
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
+def _frontend_index_response() -> FileResponse:
+    # 前端没有构建产物指纹；HTML 必须每次取新版本，否则它会继续引用旧的
+    # ChatState/pages 脚本并静默丢弃服务端新增的 PlanningBrief 字段。
+    return FileResponse(
+        _FRONTEND_DIR / "index.html",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
+class RevalidatingStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 @app.get("/")
 def index():
-    return FileResponse(_FRONTEND_DIR / "index.html")
+    return _frontend_index_response()
 
 
 @app.get("/history")
 def history_page():
-    return FileResponse(_FRONTEND_DIR / "history.html")
+    return _frontend_index_response()
 
 
 @app.get("/profile")
 def profile_page():
-    return FileResponse(_FRONTEND_DIR / "profile.html")
+    return _frontend_index_response()
 
 
-app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR)), name="frontend")
+app.mount("/", RevalidatingStaticFiles(directory=str(_FRONTEND_DIR)), name="frontend")

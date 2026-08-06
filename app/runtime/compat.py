@@ -21,8 +21,9 @@ def create_legacy_run(
     overrides: dict[str, Any],
     plan_id: str | None = None,
     modification_notes: str | None = None,
+    projected_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    snapshot = {"query": query, **overrides}
+    snapshot = {**(projected_snapshot or {}), "query": query, **overrides}
     if plan_id and modification_notes:
         snapshot.update(
             {
@@ -42,6 +43,31 @@ def create_legacy_run(
         kind=RunKind.TRAVEL_PLAN,
         request_snapshot=snapshot,
     )
+
+
+def legacy_parent_constraint_snapshot(
+    manager: RunManager, user_id: str, itinerary_id: str
+) -> dict[str, Any] | None:
+    with get_conn(manager.db_path) as conn:
+        row = conn.execute(
+            "SELECT request_snapshot_json FROM runs WHERE user_id=? "
+            "AND result_itinerary_id=? ORDER BY finished_at DESC,id DESC LIMIT 1",
+            (user_id, itinerary_id),
+        ).fetchone()
+    if not row:
+        return None
+    import json
+    snapshot = json.loads(row["request_snapshot_json"] or "{}")
+    if not snapshot.get("effective_constraints"):
+        return None
+    return {
+        key: snapshot[key]
+        for key in (
+            "memory_profile_revision", "memory_profile_snapshot", "memory_context",
+            "effective_constraints", "constraint_coverage", "trip_budget",
+        )
+        if key in snapshot
+    }
 
 
 async def resume_legacy_run(

@@ -11,21 +11,40 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TripConstraintPatch(_StrictModel):
+    id: str | None = None
+    category: Literal[
+        "attraction_preference", "food_preference", "dietary_requirement",
+        "travel_pace", "budget_style", "transport_preference",
+        "accommodation_preference", "schedule_preference", "companion_context",
+        "accessibility_need", "other_travel_preference",
+    ]
+    value_text: str = Field(min_length=1, max_length=500)
+    polarity: Literal["prefer", "avoid", "require", "fact"] = "fact"
+    evidence_sequences: list[int] | None = Field(default=None, max_length=20)
+
+
 class PlanningBriefPatch(_StrictModel):
     destination: str | None = None
     start_date: str | None = None
     end_date: str | None = None
     days: int | None = Field(default=None, ge=1, le=30)
     budget: str | None = None
+    trip_budget: str | None = None
     attraction_preference: str | None = None
     food_preference: str | None = None
     habit_preference: str | None = None
+    trip_constraints: list[TripConstraintPatch] | None = Field(default=None, max_length=30)
+    remove_trip_constraint_ids: list[str] | None = Field(default=None, max_length=30)
+    excluded_memory_fact_ids: list[str] | None = Field(default=None, max_length=100)
+    restored_memory_fact_ids: list[str] | None = Field(default=None, max_length=100)
 
     @field_validator(
         "destination",
         "start_date",
         "end_date",
         "budget",
+        "trip_budget",
         "attraction_preference",
         "food_preference",
         "habit_preference",

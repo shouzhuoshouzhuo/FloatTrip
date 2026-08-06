@@ -13,7 +13,6 @@ from app.core.cache import POI_TTL, get_cached, poi_cache_key, set_cached
 from app.core.database import get_conn
 from app.core.memory import (
     delete_pending_modification,
-    extract_and_update_preferences,
     load_itinerary,
     load_pending_modification,
     save_itinerary,
@@ -305,7 +304,6 @@ async def confirm_modification(req: ConfirmModificationRequest, request: Request
                 parent_id=parent_plan_id,
                 planner_state=planner_checkpoint,
             )
-            extract_and_update_preferences(user_id, final_plan, conn)
             # 确认后删除 pending 记录
             delete_pending_modification(req.pending_id, conn)
         saved_plan_id.append(pid)

@@ -8,14 +8,30 @@ import logging
 from datetime import date, timedelta
 from typing import Annotated, Any
 
+from app.core.planning_constraints import constraint_directive
+
 logger = logging.getLogger(__name__)
+
+
+def _constraints_block(
+    state: TravelPlanState, categories: set[str] | None = None
+) -> str:
+    items = [
+        item for item in state.effective_constraints
+        if categories is None or item.get("category") in categories
+    ]
+    if not items:
+        return "（无）"
+    return "\n".join(
+        f"- [{item.get('polarity')}/{item.get('source')}] {constraint_directive(item)}"
+        for item in items
+    )
 
 from app.llm.factory import build_structured_llm
 from app.providers.amap.poi import search_around_pois, search_around_pois_async
 from app.planning.schemas import (
     DayMealPick,
     IntentExtraction,
-    ProfileUpdateResult,
     RewrittenQuery,
     RouteReview,
     SingleDayMealPick,
@@ -54,43 +70,22 @@ from app.planning.prompts import (
     TIME_CHECK_SYSTEM,
     WEEKDAYS,
 )
-from app.core.database import get_conn
-from app.core.memory import search_profile_fields
-
 from langgraph.graph import END
 
 
 # ─── Query Rewrite Agent ─────────────────────────────────────
 
-def make_query_rewrite_node(model_name: str | None, user_id: str | None):
-    """固定工作流：直接读取用户画像，单次结构化 LLM 调用改写 query 并输出冲突解析后的偏好字段。"""
+def make_query_rewrite_node(model_name: str | None, profile_hint: str = ""):
+    """Rewrite from the immutable profile hint carried by the planning Run."""
     rewrite_llm = build_structured_llm(RewrittenQuery, model=model_name, temperature=0)
 
     async def query_rewrite(state: TravelPlanState) -> dict[str, Any]:
         raw = state.query
         try:
-            # Step 1：直接读画像（固定查全部三字段，不走 ReAct tool）
-            profile_text = "（该用户暂无历史画像）"
-            if user_id:
-                def load_profile():
-                    with get_conn() as conn:
-                        return search_profile_fields(
-                            user_id,
-                            ["attraction_prefs", "food_prefs", "habit_prefs"],
-                            conn,
-                        )
-                data = await asyncio.to_thread(load_profile)
-                if data and any(data.values()):
-                    parts = []
-                    if data.get("attraction_prefs"):
-                        parts.append("景点偏好：" + "、".join(data["attraction_prefs"]))
-                    if data.get("food_prefs"):
-                        parts.append("餐饮偏好：" + "、".join(data["food_prefs"]))
-                    if data.get("habit_prefs"):
-                        parts.append("游玩习惯：" + "、".join(data["habit_prefs"]))
-                    profile_text = "\n".join(parts)
+            profile_text = profile_hint or state.profile_hint or "（该用户暂无历史画像）"
+            if state.effective_constraints:
+                profile_text = _constraints_block(state)
 
-            # Step 2：单次结构化 LLM 调用（改写 + 冲突解析 + 输出偏好字段）
             intent_prefs = (
                 f"本次查询提取的偏好：景点={state.attraction_preference or '无'}，"
                 f"餐饮={state.food_preference or '无'}，习惯={state.habit_preference or '无'}"
@@ -129,6 +124,8 @@ def make_intent_node(model_name: str | None, profile_hint: str = ""):
         hint = profile_hint or state.profile_hint or ""
         if hint:
             system += f"\n\n用户历史偏好（仅供参考，以用户本次输入为准，用户未说的字段才用历史默认值）：\n{hint}"
+        if state.effective_constraints:
+            system += f"\n\n本次已确认的结构化约束（当前输入仍优先）：\n{_constraints_block(state)}"
         effective_query = state.query
         result: IntentExtraction = await ainvoke_structured(
             llm, [("system", system), ("human", effective_query)]
@@ -290,7 +287,8 @@ def make_planner_node(model_name: str | None):
             f"目的地：{state.destination}\n旅行天数：{state.days} 天\n"
             f"每天景点数上限：{state.max_per_day}\n"
             f"景点偏好：{state.attraction_preference or '无'}\n"
-            f"游玩习惯/节奏：{state.habit_preference or '无'}"
+            f"游玩习惯/节奏：{state.habit_preference or '无'}\n"
+            f"本次结构化约束：\n{_constraints_block(state, {'attraction_preference', 'travel_pace', 'schedule_preference', 'companion_context', 'transport_preference', 'accessibility_need', 'budget_style', 'other_travel_preference'})}"
             f"{_travel_dates_block(state)}"
             f"{weather_block}\n\n"
             f"候选景点池（共 {len(state.pois)} 个）：\n{cand_text}"
@@ -379,7 +377,8 @@ def make_reviewer_node(model_name: str | None):
 
         prompt = (
             f"目的地：{state.destination}，共 {state.days} 天，每天上限 {state.max_per_day}。\n"
-            f"用户游玩习惯：{state.habit_preference or '无'}"
+            f"用户游玩习惯：{state.habit_preference or '无'}\n"
+            f"本次路线约束：\n{_constraints_block(state, {'travel_pace', 'schedule_preference', 'companion_context', 'transport_preference', 'accessibility_need', 'attraction_preference'})}"
             f"{_travel_dates_block(state)}\n"
             f"{weather_block}\n"
             f"候选景点池：\n{format_spots_for_llm(state.pois, cluster_pois_by_location(state.pois, state.days))}\n\n"
@@ -628,6 +627,7 @@ def make_meal_recommend_node(model_name: str | None):
             dinner_cands = _top(entry["dinner"].get("candidates", []))
             prompt = (
                 f"第 {entry['day']} 天 | 用户用餐偏好：{state.food_preference or '无特别偏好'}\n\n"
+                f"本次餐饮与预算约束：\n{_constraints_block(state, {'food_preference', 'dietary_requirement', 'budget_style'})}\n\n"
                 f"午餐候选（{entry['lunch'].get('anchor')} 周边）：\n{_fmt(lunch_cands)}\n\n"
                 f"晚餐候选（{entry['dinner'].get('anchor')} 周边）：\n{_fmt(dinner_cands)}\n\n"
                 "请选出今天的午餐和晚餐。"
@@ -745,6 +745,7 @@ def make_spot_tips_node(model_name: str | None):
         weather_text = format_weather_for_llm(state.weather_forecast) or "（无可用天气预报）"
         prompt = (
             f"目的地：{state.destination}\n\n"
+            f"同行、节奏与无障碍提示约束：\n{_constraints_block(state, {'travel_pace', 'schedule_preference', 'companion_context', 'accessibility_need', 'transport_preference'})}\n\n"
             "行程：\n" + "\n".join(lines) + "\n\n"
             f"逐天天气预报：\n{weather_text}"
         )
@@ -858,6 +859,14 @@ def _finalize_impl(state: TravelPlanState) -> dict[str, Any]:
             "food": state.food_preference,
             "habit": state.habit_preference,
         },
+        "trip_budget": state.trip_budget,
+        "effective_constraints": state.effective_constraints,
+        "constraint_coverage": state.constraint_coverage,
+        "planning_notes": [
+            "住宿偏好已作为出行建议保留；当前版本未接入酒店搜索或预订数据。"
+            for item in state.effective_constraints
+            if item.get("category") == "accommodation_preference"
+        ][:1],
         "approved": state.approved,
         "review_rounds": state.review_round,
         "weather_forecast": state.weather_forecast,

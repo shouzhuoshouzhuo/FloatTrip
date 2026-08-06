@@ -77,7 +77,7 @@ def build_graph(
 ):
     g = StateGraph(TravelPlanState)
 
-    g.add_node("query_rewrite", _with_progress("query_rewrite", make_query_rewrite_node(model_name, user_id)))
+    g.add_node("query_rewrite", _with_progress("query_rewrite", make_query_rewrite_node(model_name, profile_hint)))
     g.add_node("intent", _with_progress("intent", make_intent_node(model_name, profile_hint=profile_hint)))
     g.add_node("attraction_search", _with_progress("attraction_search", attraction_search_node))
     g.add_node("planner", _with_progress("planner", make_planner_node(model_name)))

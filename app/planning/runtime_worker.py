@@ -7,13 +7,11 @@ from typing import Any
 
 from app.core.database import get_conn
 from app.core.memory import (
-    format_profile_for_prompt,
-    get_user_profile,
     load_itinerary,
     save_itinerary,
-    set_user_profile,
 )
-from app.planning.profile_updater import run_profile_update_agent
+from app.core.travel_memory import MemoryRepository
+from app.core.planning_constraints import constraints_for_prompt
 from app.planning.schemas import TravelPlanState
 from app.runtime.manager import RunManager
 
@@ -21,6 +19,8 @@ from app.runtime.manager import RunManager
 def snapshot_to_state(snapshot: dict[str, Any]) -> TravelPlanState:
     allowed = set(TravelPlanState.model_fields)
     values = {key: value for key, value in snapshot.items() if key in allowed}
+    values.setdefault("travel_start_date", snapshot.get("start_date"))
+    values.setdefault("travel_end_date", snapshot.get("end_date"))
     if not values.get("query"):
         destination = values.get("destination") or snapshot.get("destination") or ""
         days = values.get("days") or snapshot.get("days") or ""
@@ -29,14 +29,18 @@ def snapshot_to_state(snapshot: dict[str, Any]) -> TravelPlanState:
 
 
 async def planning_run_to_state(run: dict[str, Any]) -> TravelPlanState:
-    def load_profile():
-        with get_conn() as conn:
-            return get_user_profile(run["user_id"], conn)
-
-    profile = await asyncio.to_thread(load_profile)
+    facts = run["request_snapshot"].get("memory_profile_snapshot")
+    if facts is None:
+        _revision, facts = await asyncio.to_thread(
+            MemoryRepository().snapshot, run["user_id"]
+        )
+    effective = run["request_snapshot"].get("effective_constraints") or []
     snapshot = {
         **run["request_snapshot"],
-        "profile_hint": format_profile_for_prompt(profile) or None,
+        "profile_hint": (
+            constraints_for_prompt(effective)
+            if effective else MemoryRepository.format_for_prompt(facts)
+        ) or None,
     }
     return snapshot_to_state(snapshot)
 
@@ -65,6 +69,17 @@ async def revision_snapshot_to_state(run: dict[str, Any]) -> TravelPlanState:
         attraction_preference=checkpoint.get("attraction_preference"),
         food_preference=checkpoint.get("food_preference"),
         habit_preference=checkpoint.get("habit_preference"),
+        trip_budget=snapshot.get("trip_budget") or checkpoint.get("trip_budget"),
+        effective_constraints=(
+            snapshot.get("effective_constraints")
+            or checkpoint.get("effective_constraints")
+            or []
+        ),
+        constraint_coverage=(
+            snapshot.get("constraint_coverage")
+            or checkpoint.get("constraint_coverage")
+            or []
+        ),
         weather_forecast=checkpoint.get("weather_forecast", []),
         weather_note=checkpoint.get("weather_note"),
         max_per_day=checkpoint.get("max_per_day", 3),
@@ -104,13 +119,6 @@ class PlanningFinalizer:
             },
             durable=True,
         )
-        asyncio.create_task(
-            self._update_profile_safely(
-                run["user_id"],
-                state.query,
-                state.model_name,
-            )
-        )
         return {"result_itinerary_id": itinerary_id}
 
     @staticmethod
@@ -130,23 +138,4 @@ class PlanningFinalizer:
                 modification_notes=state.modification_notes,
                 planner_state=checkpoint,
             )
-            if state.destination:
-                profile = get_user_profile(run["user_id"], conn)
-                destinations = profile.get("visited_destinations", [])
-                if state.destination not in destinations:
-                    destinations = ([str(state.destination)] + destinations)[:20]
-                    set_user_profile(
-                        run["user_id"],
-                        {**profile, "visited_destinations": destinations},
-                        conn,
-                    )
         return itinerary_id
-
-    @staticmethod
-    async def _update_profile_safely(
-        user_id: str, query: str, model_name: str | None
-    ) -> None:
-        try:
-            await run_profile_update_agent(user_id, query, model_name)
-        except Exception:
-            return

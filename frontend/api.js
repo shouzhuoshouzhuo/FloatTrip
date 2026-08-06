@@ -164,6 +164,9 @@ function createConversation(title = "") {
     method: "POST", body: JSON.stringify({ title }),
   });
 }
+function markConversationViewed(id) {
+  return apiJson(`/api/conversations/${id}/view`, { method: "POST" });
+}
 function getConversationMessages(id, afterSequence = 0) {
   return apiJson(`/api/conversations/${id}/messages?after_sequence=${afterSequence}`);
 }
@@ -173,6 +176,15 @@ function submitConversationMessage(id, content, context = {}) {
     body: JSON.stringify({ content, ...context }),
   });
 }
+function compressConversation(id) {
+  return apiJson(`/api/conversations/${id}/compress`, { method: "POST" });
+}
+function archiveConversation(id) {
+  return apiJson(`/api/conversations/${id}/archive`, { method: "POST" });
+}
+function retryConversationMemory(id) {
+  return apiJson(`/api/conversations/${id}/memory/retry`, { method: "POST" });
+}
 function getActivePlanningBrief(conversationId) {
   return apiJson(`/api/conversations/${conversationId}/planning-brief`);
 }
@@ -180,6 +192,9 @@ function updatePlanningBrief(id, patch) {
   return apiJson(`/api/planning-briefs/${id}`, {
     method: "PATCH", body: JSON.stringify(patch),
   });
+}
+function refreshPlanningBriefMemory(id) {
+  return apiJson(`/api/planning-briefs/${id}/memory/refresh`, { method: "POST" });
 }
 function submitPlanningBrief(id) {
   return apiJson(`/api/planning-briefs/${id}/submit`, { method: "POST" });
@@ -281,15 +296,17 @@ async function getProfile() {
   if (!r.ok) return null;
   return r.json();
 }
-
-async function saveProfile(data) {
-  const r = await fetch("/api/profile", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(data),
-  });
-  if (!r.ok) throw new Error("保存失败");
-  return r.json();
+function createMemoryFact(data) {
+  return apiJson("/api/memories", { method: "POST", body: JSON.stringify(data) });
+}
+function updateMemoryFact(id, data) {
+  return apiJson(`/api/memories/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+function approveMemoryFact(id) {
+  return apiJson(`/api/memories/${id}/approve`, { method: "POST" });
+}
+function deleteMemoryFact(id) {
+  return apiJson(`/api/memories/${id}`, { method: "DELETE" });
 }
 
 /* ── Config / Amap ────────────────────────────────── */
@@ -797,7 +814,10 @@ Object.assign(window, {
   loginApi, registerApi, checkAuth,
   streamPlan, confirmModification,
   getHistory, getHistoryItem,
-  getProfile, saveProfile,
+  getProfile, createMemoryFact, updateMemoryFact, approveMemoryFact, deleteMemoryFact,
+  listConversations, createConversation, markConversationViewed,
+  getConversationMessages, submitConversationMessage,
+  compressConversation, archiveConversation, retryConversationMemory,
   getConfig, ensureAMap, initAmapForDay, destroyAmap,
   optimizeDay, revertDay,
   searchPoi, saveTimeline,

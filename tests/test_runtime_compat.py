@@ -6,7 +6,9 @@ from pathlib import Path
 
 from app.core.database import get_conn, init_db
 from app.core.memory import save_itinerary
-from app.runtime.compat import create_legacy_run, legacy_events
+from app.runtime.compat import (
+    create_legacy_run, legacy_events, legacy_parent_constraint_snapshot,
+)
 from app.runtime.manager import RunManager
 
 
@@ -95,3 +97,32 @@ class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             run["request_snapshot"]["related_itinerary_id"], base_id
         )
+
+    async def test_legacy_revision_can_inherit_parent_constraint_snapshot(self):
+        parent = create_legacy_run(
+            self.manager, user_id="owner", query="东京三日游", overrides={},
+            projected_snapshot={
+                "memory_profile_revision": 3,
+                "effective_constraints": [{
+                    "id": "memory:f1", "fact_id": "f1", "category": "travel_pace",
+                    "value_text": "慢节奏", "polarity": "prefer", "source": "long_term_memory",
+                }],
+                "constraint_coverage": [{"constraint_id": "memory:f1", "status": "applied"}],
+            },
+        )
+        with get_conn(self.db_path) as conn:
+            itinerary_id = save_itinerary(
+                "owner", {"destination": "东京", "days": []}, "东京三日游", conn,
+                planner_state={"query": "东京三日游", "route": [], "pois": []},
+            )
+        self.manager.runs.transition(parent["id"], "running")
+        self.manager.runs.transition(parent["id"], "succeeded", result_itinerary_id=itinerary_id)
+        inherited = legacy_parent_constraint_snapshot(self.manager, "owner", itinerary_id)
+        self.assertEqual(inherited["memory_profile_revision"], 3)
+        revision = create_legacy_run(
+            self.manager, user_id="owner", query="第二天更轻松", overrides={},
+            plan_id=itinerary_id, modification_notes="第二天更轻松",
+            projected_snapshot={**inherited, "constraint_snapshot_source": "parent_run"},
+        )
+        self.assertEqual(revision["request_snapshot"]["effective_constraints"][0]["fact_id"], "f1")
+        self.assertEqual(revision["request_snapshot"]["constraint_snapshot_source"], "parent_run")

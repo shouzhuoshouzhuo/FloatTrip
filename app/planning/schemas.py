@@ -161,6 +161,9 @@ class TravelPlanState(BaseModel):
     attraction_preference: Optional[str] = None
     food_preference: Optional[str] = None
     habit_preference: Optional[str] = None
+    trip_budget: Optional[str] = None
+    effective_constraints: list[dict[str, Any]] = Field(default_factory=list)
+    constraint_coverage: list[dict[str, Any]] = Field(default_factory=list)
     days: int = 0
     missing_fields: list[str] = Field(default_factory=list)
 

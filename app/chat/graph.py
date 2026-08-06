@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, TypedDict
 
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.chat.models import DialogueDecision, DialogueUnderstandingError
@@ -49,8 +50,7 @@ async def dialogue_agent_node(
             if attempt == 0:
                 messages = [
                     *messages,
-                    (
-                        "human",
+                    HumanMessage(
                         "上一份结构化结果未通过校验。请只按既定 schema 重新输出，"
                         "不要添加字段，也不要解释错误。",
                     ),

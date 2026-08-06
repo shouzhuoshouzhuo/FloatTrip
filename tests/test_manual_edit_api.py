@@ -62,8 +62,14 @@ def client(tmp_path, monkeypatch):
 def make_auth():
     """造一个用户 id + Bearer 头。"""
     from app.core.auth import create_token
+    from app.core.database import get_conn
 
     uid = str(uuid.uuid4())
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO users(id,username,password_hash,created_at) VALUES(?,?,?,?)",
+            (uid, f"test-{uid}", "test", "2026-01-01T00:00:00Z"),
+        )
     return uid, {"Authorization": "Bearer " + create_token(uid)}
 
 

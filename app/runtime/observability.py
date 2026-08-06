@@ -74,6 +74,14 @@ class RuntimeMetrics:
             )
             self._record(f"provider_seconds:{provider}", duration)
 
+    def increment(self, key: str, amount: int = 1) -> None:
+        with self._lock:
+            self._counters[key] += amount
+
+    def observe(self, key: str, value: float) -> None:
+        with self._lock:
+            self._record(key, value)
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {

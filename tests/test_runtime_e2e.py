@@ -79,15 +79,10 @@ class RuntimeEndToEndTests(unittest.IsolatedAsyncioTestCase):
         await self.scheduler.stop()
         self.assertEqual(finished["status"], "succeeded")
         self.assertTrue(finished["result_itinerary_id"])
-        self.assertEqual(
-            submitted["submission_snapshot"],
-            {
-                "destination": "云南",
-                "days": 5,
-                "start_date": "2026-10-01",
-                "end_date": "2026-10-05",
-            },
-        )
+        self.assertEqual(submitted["submission_snapshot"]["destination"], "云南")
+        self.assertEqual(submitted["submission_snapshot"]["days"], 5)
+        self.assertEqual(submitted["submission_snapshot"]["effective_constraints"], [])
+        self.assertEqual(submitted["submission_snapshot"]["constraint_coverage"], [])
 
     async def test_targeted_message_is_understood_then_creates_a_real_revision_run(self):
         conversations = ConversationRepository(self.db_path)

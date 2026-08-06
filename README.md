@@ -1,109 +1,101 @@
+<div align="center">
 
+# ✈️ 途见 · FloatTrip
 
-# ✈️ AI 旅游规划助手
+### 记住旅行偏好，从一句话走到可执行行程
 
-**一句话描述需求，自动生成带时刻表的多日旅游计划**
+途见会在对话中理解目的地、日期与真实约束，把你确认过的旅行习惯带进下一次规划，
+再用 LangGraph 多 Agent、天气和高德真实 POI 生成可追踪、可编辑的完整路线。
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-1.2+-FF6B35)](https://github.com/langchain-ai/langgraph)
+[![Amap](https://img.shields.io/badge/POI-高德地图-1677FF)](https://lbs.amap.com/)
 [![Eval: pass@k](https://img.shields.io/badge/Eval-pass%40k%20%2F%20pass%5Ek-brightgreen)](tests/EVAL_GUIDE.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[产品演示](#demo) · [快速开始](#quick-start) · [系统架构](#architecture) · [评测体系](#evaluation)
+
 </div>
 
+---
+
+## ✨ 为什么是途见
+
+大多数旅行规划工具只记得当前的一句话。途见把一次旅行拆成可理解、可确认、可恢复的过程：
+
+- 🧠 **长期旅行记忆** — 从已归档对话中提取可追溯的偏好与避雷项；用户可以审批、编辑、忘记，并为单次旅行临时覆盖。
+- 💬 **先对话，再开跑** — 多轮澄清后生成结构化 Planning Brief；目的地、日期和记忆投影都清楚展示，只有明确确认才启动正式规划。
+- 🗺️ **真实地点与可执行路线** — 景点、餐厅来自高德 POI，结合天气、开放时间、地理聚类和 Planner ⇄ Reviewer 多轮优化。
+- ⚡ **离开页面也会继续** — Chat 与规划使用持久化 Run，支持排队、SSE 回放、取消、重试、断线恢复和需要用户确认时暂停。
+- ✍️ **结果不是一次性答案** — 行程支持地图动线、拖拽换序、换点、改时段、撤销重做、路线优化和服务端距离重算。
+- 🧪 **质量可以量化** — 内置代码打分器、LLM 评委、Reviewer 可靠性和 pass@k / pass^k 指标，而不只依赖主观观感。
+
+所有景点与餐厅数据均来自**高德真实 POI**；长期记忆具有来源、作用域和审计记录，不会在用户不知情的情况下静默覆盖当前需求。
+
+> 完整 Agent 评测方法、指标与运行方式见 [`tests/EVAL_GUIDE.md`](tests/EVAL_GUIDE.md)。
 
 ---
 
-## 📖 简介
+<a id="demo"></a>
 
-AI 旅游规划助手是一个基于 **LangGraph 多 Agent 流水线** 的旅游行程生成工具。只需输入一句话的出行需求（目的地、日期、偏好），系统即可自动完成：
+## 🎬 产品演示
 
-- 🔍 **意图识别（快速失败）** — 从自然语言抽取目的地、日期、偏好；支持"明天开始3日游"等相对时间 + 天数表达式；缺目的地/日期时立即返回，不触发后续 LLM 调用
-- 🌤️ **天气感知** — 自动拉取出行日期天气预报，雨雪天优先安排室内景点，超出预报范围时降级提示
-- 🗺️ **景点搜索** — 调用高德地图 API 获取真实景点候选池，按评分过滤
-- 🧭 **智能规划** — Planner/Reviewer 多轮循环优化，共享对话记忆确保紧急问题优先修复
-- 🍜 **餐饮推荐** — 基于每天动线搜索周边餐厅，按天并行调用 LLM 推荐午晚餐
-- 🗺️ **地图可视化** — 前端接入高德 JS API，在半屏地图上逐天绘制行程动线与景点标注
-- ✍️ **手动编辑** — 对生成的行程可拖拽换序、搜索换点/换餐厅、改时段，带撤销/重做栈；保存时服务端重算逐段距离
-- 💬 **对话式规划** — 先通过多轮聊天澄清需求、生成可编辑的规划简报，再提交正式规划任务
-- ⚡ **事件驱动 Runtime** — Chat 与规划任务均以持久化 Run 执行，支持排队、SSE 进度回放、取消、重试和需要用户确认时的恢复
-- 🔌 **多 LLM 提供商** — 通过 `LLM_PROVIDER` 一键切换 DeepSeek / 豆包，统一工厂函数封装，缺 Key 时给出明确报错
+### 1. 对话生成 Planning Brief，长期记忆透明可控
 
-所有景点与餐厅数据均来自**高德真实 POI**，不会凭空捏造地点。
-
-> 🧪 **这个项目有Agent评测体系**：基于 Anthropic《Demystifying Evals for AI Agents》方法论，对核心 Agent（Planner / Reviewer）建立了可复现的定量评估框架，包括代码打分器 G1–G7 + LLM 评委 + Reviewer 可靠性指标，指标覆盖 pass@k、pass^k、收敛轮次、误放行率、planner 反驳率。详见 [`tests/EVAL_GUIDE.md`](tests/EVAL_GUIDE.md)。
-
----
-
-## 🎬 演示
-
-> 新建规划页
+目的地与日期会被结构化展示；本次带入的长期记忆注明来源和作用方式，也可以只为当前旅行临时覆盖。
 
 <p align="center">
-  <img src="./static/images/规划页.png" alt="规划页" width="900" />
+  <img src="./static/images/readme/conversation-memory-brief.png" alt="途见的记忆感知规划确认卡" width="1100" />
 </p>
 
-> 规划进度页
-
-<p align="center">
-  <img src="./static/images/规划进度.png" alt="详情页" width="900" />
-</p>
-
-> 规划详情页
-
-<p align="center">
-  <img src="./static/images/规划详情.png" alt="详情页" width="900" />
-</p>
-
-> 历史规划页
-
-<p align="center">
-  <img src="./static/images/历史行程页.png" alt="历史页" width="900" />
-</p>
-
-> 我的画像
-
-<p align="center">
-  <img src="./static/images/我的画像.png" alt="历史页" width="900" />
-</p>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>2. 天气、真实 POI 与地图动线</h3>
+      <p>逐日天气、候选景点、时间表和地图路线在同一视图中联动，结果可以继续编辑和优化。</p>
+      <img src="./static/images/readme/itinerary-map.png" alt="途见的行程详情与地图动线" width="100%" />
+    </td>
+    <td width="50%" valign="top">
+      <h3>3. 旅行画像不是黑盒</h3>
+      <p>记忆按类型和作用域管理，保留来源与版本；用户始终可以新增、编辑或忘记。</p>
+      <img src="./static/images/readme/travel-memory-profile.png" alt="途见的旅行记忆画像" width="100%" />
+    </td>
+  </tr>
+</table>
 
 
 ---
 
-## 🏗️ 架构
+<a id="architecture"></a>
+
+## 🏗️ 系统架构
 
 ```
-用户输入
+旅行对话 ──→ [LLM 对话理解] ──→ [Planning Brief]
+   │                │                   │
+   │                └── 冻结对话记忆     ├── 动态旅行约束
+   │                                     └── 长期记忆投影 / 单次覆盖
    │
-   ▼
-[Intent Agent]  ──── 缺少目的地/日期 ──→  提示补充信息（快速失败，无额外 LLM 成本）
-   │
-   ▼
-[Query Rewrite]  ←── 直接读 DB 画像，单次 LLM 改写 + 冲突解析（登录用户专属）
-   │
-   ▼
-[高德景点搜索]  ←── 多关键词 + 评分过滤
-   │
-   ▼
-[Planner Agent] ──────────────────────────┐
-   │                                      │
-   ▼                                      │ 评审不通过（最多 N 轮）
-[Reviewer Agent] ─────────────────────────┘
-   │ 通过 / 达上限
-   ▼
-[Time Check Agent] ←──────────────────────┐
-   │                                      │ 有时间冲突（最多 M 轮）
-   │ 无冲突 / 达上限                      │
-   │                              [Planner Agent]（仅修正时间）
-   ▼
-[高德周边餐饮搜索]（1000m 内）
-   │
-   ▼
-[Meal Recommend Agent]
-   │
-   ▼
-[Finalize]  →  含时刻表 + 餐厅 + 距离的完整行程
+   └── 用户明确确认 ──→ [持久化 Planning Run / SSE 回放]
+                              │
+                              ▼
+                       [Intent + Query Rewrite]
+                              │
+                              ▼
+                  [天气 + 高德 POI + 地理聚类]
+                              │
+                              ▼
+                  [Planner Agent ⇄ Reviewer Agent]
+                              │
+                              ▼
+                 [Time Check ⇄ Planner 定向修正]
+                              │
+                              ▼
+                   [周边餐饮 + Meal Recommend]
+                              │
+                              ▼
+        [Finalize] → 时刻表 + 餐厅 + 距离 + 地图 + 约束说明
 ```
 
 Chat 和正式规划分别使用独立并发容量；同一会话的 Chat 串行，同一基础行程的修改串行。
@@ -127,13 +119,15 @@ Run 的生命周期、进度、交互请求与结果均会持久化，客户端�
 
 ---
 
+<a id="quick-start"></a>
+
 ## 🚀 快速开始
 
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/your-username/trip-agent.git
-cd trip-agent
+git clone https://github.com/shouzhuoshouzhuo/FloatTrip.git
+cd FloatTrip
 ```
 
 ### 2. 安装依赖
@@ -288,6 +282,8 @@ LLM 在用户未提供偏好时偶尔吐出 `null`/`none`/`无`/`不限` 等占�
 对话和规划不再依赖单个 HTTP 请求的生命周期。Runtime 为每次操作创建持久化 Run：容量不足时安全排队，运行状态、进度、错误、交互请求和最终结果可查询并通过 SSE 回放；支持取消、重试和 LangGraph interrupt 恢复。当前实现适用于单节点部署，多节点部署边界见 [`docs/agent-runtime.md`](docs/agent-runtime.md)。
 
 ---
+
+<a id="evaluation"></a>
 
 ## 🧪 评测体系
 

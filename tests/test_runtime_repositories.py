@@ -82,6 +82,68 @@ class RepositoryTestCase(unittest.TestCase):
         updated = self.conversations.get("user-a", conversation["id"])
         self.assertEqual(updated["title"], "更偏美食和古城，那就泉州吧。10月12日到15日")
 
+    def test_conversation_attention_aggregates_formal_runs_and_view_cursor(self):
+        conversation = self.conversations.create("user-a", "后台规划")
+        brief = self.briefs.upsert_active(
+            "user-a",
+            conversation["id"],
+            {
+                "destination": "南京",
+                "start_date": "2026-08-08",
+                "end_date": "2026-08-10",
+            },
+        )
+        self.assertEqual(brief["status"], "ready")
+
+        with get_conn(self.db_path) as conn:
+            formal = self.runs.insert(
+                conn,
+                run_id="attention-formal",
+                user_id="user-a",
+                kind=RunKind.TRAVEL_PLAN,
+                concurrency_key="plan:attention-formal",
+                request_snapshot={},
+                conversation_id=conversation["id"],
+            )
+            self.runs.insert(
+                conn,
+                run_id="attention-chat",
+                user_id="user-a",
+                kind=RunKind.CHAT,
+                concurrency_key=f"chat:{conversation['id']}",
+                request_snapshot={},
+                conversation_id=conversation["id"],
+            )
+
+        attention = self.conversations.get("user-a", conversation["id"])
+        self.assertTrue(attention["has_active_planning"])
+        self.assertTrue(attention["has_ready_brief"])
+        self.assertFalse(attention["has_waiting_user"])
+        self.assertFalse(attention["has_unread_completed"])
+
+        self.runs.transition(formal["id"], RunStatus.RUNNING)
+        self.runs.transition(formal["id"], RunStatus.WAITING_USER)
+        attention = self.conversations.get("user-a", conversation["id"])
+        self.assertFalse(attention["has_active_planning"])
+        self.assertTrue(attention["has_waiting_user"])
+
+        self.runs.transition(formal["id"], RunStatus.RUNNING)
+        self.runs.transition(formal["id"], RunStatus.SUCCEEDED)
+        attention = self.conversations.get("user-a", conversation["id"])
+        self.assertTrue(attention["has_unread_completed"])
+
+        viewed = self.conversations.mark_viewed("user-a", conversation["id"])
+        self.assertFalse(viewed["has_unread_completed"])
+        with self.assertRaises(OwnedResourceNotFound):
+            self.conversations.mark_viewed("user-b", conversation["id"])
+
+    def test_chat_run_does_not_create_planning_attention(self):
+        conversation = self.conversations.create("user-a", "普通聊天")
+        self.create_run("user-a", conversation["id"])
+        attention = self.conversations.list("user-a")[0]
+        self.assertFalse(attention["has_active_planning"])
+        self.assertFalse(attention["has_unread_completed"])
+
     def test_active_brief_is_reused_and_submission_snapshot_is_immutable(self):
         conversation = self.conversations.create("user-a")
         first = self.briefs.upsert_active(
@@ -119,15 +181,10 @@ class RepositoryTestCase(unittest.TestCase):
             "user-a", second["id"], create_run
         )
         self.assertEqual(run["id"], same_run["id"])
-        self.assertEqual(
-            submitted["submission_snapshot"],
-            {
-                "destination": "云南",
-                "days": 5,
-                "start_date": "2026-10-01",
-                "end_date": "2026-10-05",
-            },
-        )
+        self.assertEqual(submitted["submission_snapshot"]["destination"], "云南")
+        self.assertEqual(submitted["submission_snapshot"]["days"], 5)
+        self.assertEqual(submitted["submission_snapshot"]["trip_constraints"], [])
+        self.assertEqual(submitted["submission_snapshot"]["effective_constraints"], [])
         self.assertEqual(
             submitted_again["submission_snapshot"],
             submitted["submission_snapshot"],

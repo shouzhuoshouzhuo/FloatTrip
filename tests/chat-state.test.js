@@ -117,6 +117,75 @@ test("stores planning briefs by id", () => {
   assert.equal(state.briefs["brief-a"].status, "ready");
 });
 
+test("keeps dynamic constraints and memory projection on planning brief events", () => {
+  let state = ChatState.initialState();
+  state = ChatState.applyEvent(state, "chat-run", {
+    kind: "custom", sequence: 2,
+    payload: {
+      kind: "planning_brief.ready", brief_id: "brief-memory", status: "ready",
+      summary: {
+        destination: "东京", trip_budget: "5000 元",
+        trip_constraints: [{ id: "c1", category: "travel_pace", value_text: "每天最多三个景点", polarity: "require" }],
+      },
+      missing_fields: [],
+      memory_context: {
+        revision: 4, status: "succeeded",
+        applied_facts: [{ fact_id: "f1", category: "dietary_requirement", value_text: "避开花生" }],
+        excluded_facts: [],
+      },
+      effective_constraints: [{ id: "c1", value_text: "每天最多三个景点" }],
+      constraint_coverage: [{ constraint_id: "c1", status: "applied" }],
+    },
+  });
+  const brief = state.briefs["brief-memory"];
+  assert.equal(brief.memory_context.applied_facts[0].fact_id, "f1");
+  assert.equal(brief.effective_constraints.length, 1);
+  assert.deepEqual(ChatState.briefViewModel(brief).preferences, [
+    ["本次预算", "5000 元"], ["旅行节奏 · 必须", "每天最多三个景点"],
+  ]);
+  assert.equal(ChatState.briefViewModel(brief).usesDefaults, false);
+});
+
+test("renders a persisted planning brief with explicit and long-term constraints after reload", () => {
+  const brief = {
+    id: "brief-reloaded", status: "ready",
+    data: {
+      destination: "南京",
+      trip_constraints: [{
+        id: "c-hotpot", category: "food_preference",
+        value_text: "吃火锅", polarity: "prefer", source: "conversation",
+      }],
+    },
+    memory_context: {
+      status: "succeeded",
+      applied_facts: [{
+        fact_id: "f-pace", category: "travel_pace",
+        value_text: "不喜欢早起", source: "long_term_memory",
+      }],
+    },
+  };
+
+  const view = ChatState.briefViewModel(brief);
+  assert.deepEqual(view.preferences, [["餐饮 · 偏好", "吃火锅"]]);
+  assert.equal(view.usesDefaults, false);
+  assert.equal(brief.memory_context.applied_facts[0].value_text, "不喜欢早起");
+});
+
+test("explains avoid memory as an exclusion instead of a destination preference", () => {
+  const avoid = ChatState.memoryFactPresentation({
+    category: "attraction_preference", value_text: "老门东", polarity: "avoid",
+  });
+  assert.deepEqual(avoid, {
+    tone: "avoid", badge: "本次避开", summaryLabel: "避开",
+    effect: "规划时将排除，不纳入候选行程",
+    excludeAction: "本次允许安排", restoreAction: "恢复避开",
+  });
+  assert.deepEqual(ChatState.briefViewModel({
+    status: "ready",
+    data: { trip_constraints: [{ category: "attraction_preference", value_text: "老门东", polarity: "avoid" }] },
+  }).preferences, [["景点 · 避开", "老门东"]]);
+});
+
 test("shows a thinking item only while a chat run is awaiting its response", () => {
   let state = ChatState.initialState();
   state.runs["chat-run"] = {
@@ -195,6 +264,40 @@ test("labels submitted planning briefs accurately", () => {
   assert.equal(ChatState.planningBriefStatusLabel("collecting"), "信息收集中");
   assert.equal(ChatState.planningBriefStatusLabel("ready"), "等待确认");
   assert.equal(ChatState.planningBriefStatusLabel("submitted"), "已提交");
+});
+
+test("prioritizes conversation attention that needs the user", () => {
+  const item = {
+    status: "active",
+    has_waiting_user: true,
+    has_ready_brief: true,
+    has_active_planning: true,
+    has_unread_completed: true,
+  };
+  assert.deepEqual(ChatState.conversationAttention(item), {
+    kind: "waiting-user", label: "待你回复", ariaLabel: "规划正在等待你的回复",
+  });
+  item.has_waiting_user = false;
+  assert.equal(ChatState.conversationAttention(item).kind, "ready-brief");
+  item.has_ready_brief = false;
+  assert.equal(ChatState.conversationAttention(item).kind, "planning");
+  item.has_active_planning = false;
+  assert.equal(ChatState.conversationAttention(item).kind, "unread");
+});
+
+test("archive state suppresses planning and unread attention", () => {
+  assert.deepEqual(ChatState.conversationAttention({
+    status: "archived", has_waiting_user: true, has_unread_completed: true,
+  }), { kind: "archived", label: "已归档", ariaLabel: "对话已归档" });
+});
+
+test("only polls and marks a loaded conversation while the page is visible", () => {
+  assert.equal(ChatState.shouldPollConversations("visible"), true);
+  assert.equal(ChatState.shouldPollConversations("hidden"), false);
+  assert.equal(ChatState.shouldMarkConversationViewed("visible", "conversation-1", "conversation-1"), true);
+  assert.equal(ChatState.shouldMarkConversationViewed("hidden", "conversation-1", "conversation-1"), false);
+  assert.equal(ChatState.shouldMarkConversationViewed("visible", "conversation-2", "conversation-1"), false);
+  assert.equal(ChatState.shouldMarkConversationViewed("visible", "", "conversation-1"), false);
 });
 
 test("projects messages, briefs, non-chat runs, and failed chat retries into one stable activity timeline", () => {

@@ -83,6 +83,36 @@
     }[status] || status;
   }
 
+  function conversationAttention(conversation) {
+    if (!conversation) return null;
+    if (conversation.status === "archived") {
+      return { kind: "archived", label: "已归档", ariaLabel: "对话已归档" };
+    }
+    if (conversation.has_waiting_user) {
+      return { kind: "waiting-user", label: "待你回复", ariaLabel: "规划正在等待你的回复" };
+    }
+    if (conversation.has_ready_brief) {
+      return { kind: "ready-brief", label: "待确认", ariaLabel: "旅行方案等待你确认" };
+    }
+    if (conversation.has_active_planning) {
+      return { kind: "planning", label: "规划中", ariaLabel: "旅行行程正在规划" };
+    }
+    if (conversation.has_unread_completed) {
+      return { kind: "unread", label: "新行程", ariaLabel: "有尚未查看的新行程" };
+    }
+    return null;
+  }
+
+  function shouldMarkConversationViewed(visibilityState, activeConversationId, conversationId) {
+    return visibilityState === "visible"
+      && !!activeConversationId
+      && activeConversationId === conversationId;
+  }
+
+  function shouldPollConversations(visibilityState) {
+    return visibilityState === "visible";
+  }
+
   function upsertMessage(state, message) {
     const exists = !!state.messages[message.id];
     return {
@@ -113,6 +143,32 @@
     return "text";
   }
 
+  function memoryFactPresentation(fact) {
+    const contextOnly = fact?.application_level === "context_only";
+    const polarity = contextOnly ? "fact" : (fact?.polarity || "fact");
+    return {
+      prefer: {
+        tone: "prefer", badge: "优先考虑", summaryLabel: "偏好",
+        effect: "规划时会优先考虑", excludeAction: "本次不优先", restoreAction: "恢复优先",
+      },
+      avoid: {
+        tone: "avoid", badge: "本次避开", summaryLabel: "避开",
+        effect: "规划时将排除，不纳入候选行程", excludeAction: "本次允许安排", restoreAction: "恢复避开",
+      },
+      require: {
+        tone: "require", badge: "必须满足", summaryLabel: "必须",
+        effect: "将作为本次行程的硬性要求", excludeAction: "本次取消要求", restoreAction: "恢复要求",
+      },
+      fact: {
+        tone: "context", badge: "仅作背景", summaryLabel: "背景",
+        effect: "只用于理解行程，不代表要安排", excludeAction: "本次不参考", restoreAction: "恢复参考",
+      },
+    }[polarity] || {
+      tone: "context", badge: "仅作背景", summaryLabel: "背景",
+      effect: "只用于理解行程，不代表要安排", excludeAction: "本次不参考", restoreAction: "恢复参考",
+    };
+  }
+
   function briefViewModel(brief) {
     const data = brief?.data || {};
     const missingLabels = {
@@ -122,23 +178,33 @@
       date_range: "有效的日期范围",
       dates_or_days: "具体出行日期",
     };
-    const preferences = [
-      ["想逛", data.attraction_preference],
-      ["预算", data.budget],
-      ["餐饮", data.food_preference],
-      ["节奏", data.habit_preference],
-    ].filter(([, value]) => value);
+    const categoryLabels = {
+      attraction_preference: "景点", food_preference: "餐饮", dietary_requirement: "饮食要求",
+      travel_pace: "旅行节奏", budget_style: "预算习惯", transport_preference: "交通",
+      accommodation_preference: "住宿", schedule_preference: "作息", companion_context: "同行",
+      accessibility_need: "无障碍", other_travel_preference: "其他",
+    };
+    const preferences = (data.trip_constraints || []).map(item => {
+      const presentation = memoryFactPresentation(item);
+      return [
+        `${categoryLabels[item.category] || "旅行要求"} · ${presentation.summaryLabel}`,
+        item.value_text,
+      ];
+    });
+    [["景点", data.attraction_preference], ["餐饮", data.food_preference], ["旅行节奏", data.habit_preference]]
+      .forEach(([label, value]) => {
+        if (value && !preferences.some(([, existing]) => existing === value)) preferences.push([label, value]);
+      });
+    if (data.trip_budget || data.budget) preferences.unshift(["本次预算", data.trip_budget || data.budget]);
     return {
       destination: data.destination || "还没决定",
       dateLabel: data.start_date && data.end_date
         ? `${data.start_date} — ${data.end_date}`
         : data.days ? `${data.days} 天 · 日期待定` : "日期待补充",
       preferences,
-      usesDefaults: brief?.status === "ready" && [
-        data.budget,
-        data.food_preference,
-        data.habit_preference,
-      ].some(value => !value),
+      usesDefaults: brief?.status === "ready"
+        && !(data.trip_constraints || []).length
+        && !(brief?.memory_context?.applied_facts || []).length,
       missing: (brief?.missing_fields || []).map(field => missingLabels[field] || field),
     };
   }
@@ -291,6 +357,9 @@
               status: payload.status,
               data: payload.summary || {},
               missing_fields: payload.missing_fields || [],
+              memory_context: payload.memory_context || next.briefs[payload.brief_id]?.memory_context,
+              effective_constraints: payload.effective_constraints || [],
+              constraint_coverage: payload.constraint_coverage || [],
             },
           },
         };
@@ -362,9 +431,13 @@
     advanceRunStage,
     productStageFor,
     interactionInputKind,
+    memoryFactPresentation,
     briefViewModel,
     RUN_PRESENTATIONS,
     PRODUCT_STAGES,
     planningBriefStatusLabel,
+    conversationAttention,
+    shouldMarkConversationViewed,
+    shouldPollConversations,
   };
 })(typeof window === "undefined" ? globalThis : window);

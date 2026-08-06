@@ -11,7 +11,10 @@ from zoneinfo import ZoneInfo
 
 from app.chat.models import DialogueDecision
 from app.core.database import get_conn
-from app.core.memory import get_user_profile, set_user_profile
+from app.chat.memory_service import ChatMemoryService
+from app.chat.planning_memory import PlanningMemoryMatcher
+from app.core.planning_constraints import compatibility_preferences
+from app.core.travel_memory import ConversationMemoryRepository
 from app.runtime.manager import RunManager
 from app.runtime.models import RunKind, concurrency_key
 from app.runtime.repositories import (
@@ -28,6 +31,8 @@ class ChatService:
         self.conversations = ConversationRepository(db_path)
         self.briefs = PlanningBriefRepository(db_path)
         self.runs = RunRepository(db_path)
+        self.memory_context = ChatMemoryService(db_path)
+        self.planning_memory = PlanningMemoryMatcher(db_path)
         # Local import avoids a service/executor import cycle during module loading.
         from app.chat.executor import DialogueActionExecutor
 
@@ -43,6 +48,7 @@ class ChatService:
         related_itinerary_id: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Persist a message and queue understanding; never infer text semantics here."""
+        self.memory_context.validate_message(content)
         if related_run_id:
             await asyncio.to_thread(self.runs.get, user_id, related_run_id)
         if related_itinerary_id:
@@ -75,10 +81,20 @@ class ChatService:
     async def submit_brief(
         self, user_id: str, brief_id: str
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        current = await asyncio.to_thread(self.briefs.get, user_id, brief_id)
+        if current["status"] in self.briefs.ACTIVE:
+            current = await self.planning_memory.refresh(user_id, brief_id)
+
         def create_run(conn, snapshot, conversation_id):
             run_id = str(uuid.uuid4())
             request = dict(snapshot)
+            request.update(compatibility_preferences(request.get("effective_constraints") or []))
             request.setdefault("query", self._snapshot_query(request))
+            memory = ConversationMemoryRepository(self.manager.db_path).ensure_snapshot(
+                user_id, conversation_id, conn
+            )
+            request["memory_profile_revision"] = memory["profile_revision"]
+            request["memory_profile_snapshot"] = memory["profile_snapshot"]
             return self.runs.insert(
                 conn,
                 run_id=run_id,
@@ -104,6 +120,7 @@ class ChatService:
             run["conversation_id"],
             patch,
         )
+        brief = await self.planning_memory.refresh(run["user_id"], brief["id"])
         event_kind = (
             "planning_brief.ready"
             if brief["status"] == "ready"
@@ -118,38 +135,30 @@ class ChatService:
                 "status": brief["status"],
                 "summary": brief["data"],
                 "missing_fields": brief["missing_fields"],
+                "memory_context": brief["memory_context"],
+                "effective_constraints": brief["effective_constraints"],
+                "constraint_coverage": brief["constraint_coverage"],
             },
             durable=True,
         )
         return brief
 
-    async def merge_profile_from_brief_patch(
-        self, user_id: str, patch: dict[str, Any]
-    ) -> None:
-        """Persist explicit structured preferences without interpreting chat text.
+    async def update_brief(
+        self, user_id: str, brief_id: str, patch: dict[str, Any]
+    ) -> dict[str, Any]:
+        current = await asyncio.to_thread(self.briefs.get, user_id, brief_id)
+        brief = await asyncio.to_thread(
+            self.briefs.upsert_active,
+            user_id,
+            current["conversation_id"],
+            patch,
+        )
+        return await self.planning_memory.refresh(user_id, brief["id"])
 
-        A profile is append-only here: a newly stated preference enriches the
-        user's durable memory while absent fields never erase unrelated facts.
-        """
-        updates = {
-            "attraction_prefs": patch.get("attraction_preference"),
-            "food_prefs": patch.get("food_preference"),
-            "habit_prefs": patch.get("habit_preference"),
-        }
-        if not any(isinstance(value, str) and value.strip() for value in updates.values()):
-            return
-
-        def merge() -> None:
-            with get_conn(self.manager.db_path) as conn:
-                profile = get_user_profile(user_id, conn)
-                merged = {key: list(profile.get(key, [])) for key in profile}
-                for key, value in updates.items():
-                    normalized = value.strip() if isinstance(value, str) else ""
-                    if normalized and normalized not in merged[key]:
-                        merged[key].append(normalized)
-                set_user_profile(user_id, merged, conn)
-
-        await asyncio.to_thread(merge)
+    async def refresh_brief_memory(
+        self, user_id: str, brief_id: str
+    ) -> dict[str, Any]:
+        return await self.planning_memory.refresh(user_id, brief_id)
 
     async def publish_assistant_message(
         self, run: dict[str, Any], content: str
@@ -193,15 +202,6 @@ class ChatService:
         prevents a retried Chat Run from presenting the same user turn twice
         and keeps the agent's short-term memory stable as a conversation grows.
         """
-        messages = await asyncio.to_thread(
-            self.conversations.messages,
-            run["user_id"],
-            run["conversation_id"],
-            # The repository returns chronological rows.  Fetch a bounded
-            # envelope and retain only its newest turns below, rather than
-            # accidentally feeding the beginning of a long conversation.
-            limit=200,
-        )
         active = await asyncio.to_thread(
             self.briefs.active_for_conversation,
             run["user_id"],
@@ -212,7 +212,6 @@ class ChatService:
             run["user_id"],
             run["conversation_id"],
         )
-        profile = await asyncio.to_thread(self._user_profile_context, run["user_id"])
         snapshot = run["request_snapshot"]
         itinerary_id = snapshot.get("related_itinerary_id")
         itinerary = (
@@ -222,23 +221,10 @@ class ChatService:
             if itinerary_id
             else None
         )
-        current_id = snapshot.get("message_id")
-        history = [
-            {
-                "role": item["role"],
-                "content": item["content"],
-                "sequence": item["sequence"],
-            }
-            for item in messages
-            if item["id"] != current_id
-        ][-12:]
-        context = {
+        application_state = {
             "today": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
             "timezone": "Asia/Shanghai",
-            "current_message": snapshot.get("text", ""),
-            "history": history,
             "planning_brief": self._brief_context(active),
-            "user_profile": profile,
             "available_targets": targets,
             "explicit_target": {
                 "run_id": snapshot.get("related_run_id"),
@@ -246,21 +232,10 @@ class ChatService:
                 "itinerary": itinerary,
             },
         }
+        context = await self.memory_context.prepare(
+            run, application_state=application_state
+        )
         return {"dialogue_context": context}
-
-    def _user_profile_context(self, user_id: str) -> dict[str, list[str]]:
-        """Return only user-owned, durable preference facts for the prompt."""
-        with get_conn(self.manager.db_path) as conn:
-            profile = get_user_profile(user_id, conn)
-        return {
-            key: [str(value) for value in profile.get(key, [])[:20] if str(value).strip()]
-            for key in (
-                "attraction_prefs",
-                "food_prefs",
-                "habit_prefs",
-                "visited_destinations",
-            )
-        }
 
     def _conversation_targets(
         self, user_id: str, conversation_id: str
@@ -318,6 +293,8 @@ class ChatService:
             "status": brief["status"],
             "data": brief["data"],
             "missing_fields": brief["missing_fields"],
+            "memory_context": brief.get("memory_context"),
+            "effective_constraints": brief.get("effective_constraints") or [],
         }
 
     @staticmethod
@@ -327,7 +304,9 @@ class ChatService:
             parts.append(f"{snapshot['start_date']}至{snapshot['end_date']}")
         elif snapshot.get("days"):
             parts.append(f"{snapshot['days']}日游")
-        for key in ("attraction_preference", "food_preference", "habit_preference"):
-            if snapshot.get(key):
-                parts.append(str(snapshot[key]))
+        if snapshot.get("trip_budget"):
+            parts.append(f"本次预算：{snapshot['trip_budget']}")
+        for item in snapshot.get("effective_constraints") or []:
+            if item.get("value_text"):
+                parts.append(str(item["value_text"]))
         return "，".join(part for part in parts if part)

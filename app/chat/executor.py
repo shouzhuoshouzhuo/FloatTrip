@@ -84,7 +84,7 @@ class DialogueActionExecutor:
     async def _apply_brief(
         self, run: dict[str, Any], decision: DialogueDecision
     ) -> tuple[dict[str, Any] | None, str | None]:
-        patch = decision.brief_patch.model_dump(exclude_none=True)
+        patch = decision.brief_patch.model_dump(exclude_none=True, exclude_unset=True)
         if not patch:
             return None, "我还需要一点旅行信息，才能继续整理这趟行程。"
         if not self._patch_dates_valid(patch):
@@ -98,19 +98,44 @@ class DialogueActionExecutor:
             **((active or {}).get("data") or {}),
             **patch,
         }
+        existing_constraints = list(((active or {}).get("data") or {}).get("trip_constraints") or [])
+        remove_ids = {str(value) for value in (patch.pop("remove_trip_constraint_ids", []) or [])}
+        constraints_by_id = {
+            str(item.get("id")): dict(item)
+            for item in existing_constraints
+            if item.get("id") and str(item.get("id")) not in remove_ids
+        }
+        for item in (patch.pop("trip_constraints", []) or []):
+            item_id = str(item.get("id") or "")
+            if item_id and item_id in constraints_by_id:
+                constraints_by_id[item_id] = item
+            else:
+                key = (item.get("category"), str(item.get("value_text") or "").casefold(), item.get("polarity"))
+                duplicate = next((current_id for current_id, current in constraints_by_id.items() if (
+                    current.get("category"), str(current.get("value_text") or "").casefold(), current.get("polarity")
+                ) == key), None)
+                constraints_by_id[duplicate or item_id or f"new:{len(constraints_by_id)}"] = item
+        excluded = set(((active or {}).get("data") or {}).get("excluded_memory_fact_ids") or [])
+        excluded.update(patch.pop("excluded_memory_fact_ids", []) or [])
+        excluded.difference_update(patch.pop("restored_memory_fact_ids", []) or [])
+        if constraints_by_id or existing_constraints:
+            combined["trip_constraints"] = list(constraints_by_id.values())
+            patch["trip_constraints"] = combined["trip_constraints"]
+        if excluded:
+            combined["excluded_memory_fact_ids"] = sorted(excluded)
+            patch["excluded_memory_fact_ids"] = sorted(excluded)
         if not self._combined_dates_valid(combined):
             return None, "结束日期不能早于开始日期，请确认日期范围。"
         self._normalize_days(combined)
-        # Preserve only this turn's fields plus a date-derived days value.  The
-        # repository itself retains omitted existing fields.
-        patch = {
-            key: value
-            for key, value in combined.items()
-            if key in PlanningBriefPatch.model_fields
-            and (key in patch or key == "days")
+        # Action-only fields never enter durable brief data.  Supplying the
+        # complete canonical brief also makes list replacement deterministic.
+        durable_fields = {
+            "destination", "start_date", "end_date", "days", "budget",
+            "trip_budget", "attraction_preference", "food_preference",
+            "habit_preference", "trip_constraints", "excluded_memory_fact_ids",
         }
+        patch = {key: value for key, value in combined.items() if key in durable_fields}
         brief = await self.service.apply_brief_patch(run, patch)
-        await self.service.merge_profile_from_brief_patch(run["user_id"], patch)
         return brief, None
 
     async def _confirm_plan(
@@ -182,6 +207,11 @@ class DialogueActionExecutor:
         )
         if not modifiable:
             return None, "这份行程缺少可修改的规划记录，暂时不能在原行程上调整。"
+        memory = await asyncio.to_thread(
+            self.service.memory_context.memories.get,
+            run["user_id"],
+            run["conversation_id"],
+        )
         created = await asyncio.to_thread(
             self.service.manager.create,
             user_id=run["user_id"],
@@ -195,6 +225,8 @@ class DialogueActionExecutor:
                 "related_run_id": decision.target.run_id
                 or run["request_snapshot"].get("related_run_id"),
                 "destination": summary.get("destination"),
+                "memory_profile_revision": memory["profile_revision"],
+                "memory_profile_snapshot": memory["profile_snapshot"],
             },
         )
         return created, None

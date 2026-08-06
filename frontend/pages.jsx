@@ -93,7 +93,10 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
   const [visibleRunIds, setVisibleRunIds] = React.useState(() => new Set());
   const [observerReady, setObserverReady] = React.useState(false);
   const [composerTarget, setComposerTarget] = React.useState(null);
+  const [compressing, setCompressing] = React.useState(false);
+  const [compressionFeedback, setCompressionFeedback] = React.useState("");
   const abortsRef = React.useRef({});
+  const activeIdRef = React.useRef(null);
   const runNodesRef = React.useRef({});
   const composerRef = React.useRef(null);
   const errorRef = React.useRef(null);
@@ -105,6 +108,23 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
   const activeRuns = runList.filter(
     run => run.kind !== "chat" && ["queued", "running", "waiting_user"].includes(run.status)
   );
+  const activeConversation = conversations.find(item => item.id === activeId) || null;
+  const conversationArchived = activeConversation?.status === "archived";
+  const hasConversationMessages = Object.keys(state.messages || {}).length > 0;
+
+  const sidebarConversations = conversations.map(item => {
+    if (item.id !== activeId || item.status === "archived") return item;
+    const formalRuns = runList.filter(run => run.kind !== "chat");
+    return {
+      ...item,
+      has_waiting_user: item.has_waiting_user
+        || formalRuns.some(run => run.status === "waiting_user"),
+      has_ready_brief: item.has_ready_brief
+        || Object.values(state.briefs).some(brief => brief.status === "ready"),
+      has_active_planning: item.has_active_planning
+        || formalRuns.some(run => ["queued", "running"].includes(run.status)),
+    };
+  });
 
   const persistCursor = (runId, sequence) => {
     if (!sequence) return;
@@ -119,6 +139,18 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
     });
   }, []);
 
+  const markViewedIfVisible = React.useCallback(async conversationId => {
+    if (!ChatState.shouldMarkConversationViewed(
+      document.visibilityState, activeIdRef.current, conversationId
+    )) return;
+    try {
+      const updated = await markConversationViewed(conversationId);
+      setConversations(previous => previous.map(item => (
+        item.id === updated.id ? { ...item, ...updated } : item
+      )));
+    } catch {}
+  }, []);
+
   const subscribeRun = React.useCallback((run, explicitCursor = null) => {
     if (!run?.id || abortsRef.current[run.id]) return;
     const cursor = explicitCursor === null
@@ -128,6 +160,12 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
       onAbort: abort => { abortsRef.current[run.id] = abort; },
       onEvent: event => {
         applyRunEvent(run.id, event);
+        const completed = (
+          event.payload?.kind === "run.status" && event.payload.status === "succeeded"
+        ) || (event.kind === "end" && event.payload?.status === "succeeded");
+        if (run.kind !== "chat" && completed) {
+          markViewedIfVisible(run.conversation_id);
+        }
         if (event.payload?.kind === "run.created" && event.payload.run?.id) {
           subscribeRun(event.payload.run);
         }
@@ -135,12 +173,14 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
       onClose: () => { delete abortsRef.current[run.id]; },
       onError: () => { delete abortsRef.current[run.id]; },
     });
-  }, [applyRunEvent]);
+  }, [applyRunEvent, markViewedIfVisible]);
 
   const loadConversation = React.useCallback(async (conversationId) => {
+    activeIdRef.current = conversationId;
     setActiveId(conversationId);
     setLoading(true);
     setError("");
+    setCompressionFeedback("");
     Object.values(abortsRef.current).forEach(abort => abort());
     abortsRef.current = {};
     try {
@@ -174,12 +214,13 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
       activeRuns.forEach(
         run => subscribeRun(run, next.cursors[run.id] || 0)
       );
+      await markViewedIfVisible(conversationId);
     } catch (e) {
       setError(e.message || "加载对话失败");
     } finally {
       setLoading(false);
     }
-  }, [subscribeRun]);
+  }, [subscribeRun, markViewedIfVisible]);
 
   React.useEffect(() => {
     if (!currentUsername) { onRequestLogin?.(); return; }
@@ -195,6 +236,30 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
       Object.values(abortsRef.current).forEach(abort => abort());
     };
   }, [currentUsername]); // eslint-disable-line
+
+  React.useEffect(() => {
+    if (!currentUsername) return;
+    let active = true;
+    const refreshConversations = async () => {
+      if (!ChatState.shouldPollConversations(document.visibilityState)) return;
+      try {
+        const items = await listConversations();
+        if (active) setConversations(items);
+      } catch {}
+    };
+    const handleVisibility = async () => {
+      if (!ChatState.shouldPollConversations(document.visibilityState)) return;
+      await markViewedIfVisible(activeId);
+      await refreshConversations();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    const timer = window.setInterval(refreshConversations, 4000);
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.clearInterval(timer);
+    };
+  }, [currentUsername, activeId, markViewedIfVisible]);
 
   const newConversation = async () => {
     try {
@@ -251,6 +316,7 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
       const created = await createConversation(content.slice(0, 20));
       setConversations(previous => [created, ...previous]);
       conversationId = created.id;
+      activeIdRef.current = conversationId;
       setActiveId(conversationId);
     }
     setDraft("");
@@ -298,6 +364,48 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
   const discardBrief = async brief => {
     const result = await discardPlanningBrief(brief.id);
     refreshBrief(result);
+  };
+
+  const archiveCurrent = async () => {
+    if (!activeConversation || conversationArchived) return;
+    setError("");
+    try {
+      const archived = await archiveConversation(activeConversation.id);
+      setConversations(previous => previous.map(item => item.id === archived.id ? { ...item, ...archived } : item));
+      setComposerTarget(null);
+      setDraft("");
+    } catch (e) {
+      setError(e.message || "归档失败，请重试");
+    }
+  };
+
+  const compressCurrent = async () => {
+    if (!activeConversation || conversationArchived || compressing) return;
+    setCompressing(true);
+    setCompressionFeedback("");
+    setError("");
+    try {
+      const result = await compressConversation(activeConversation.id);
+      setCompressionFeedback(result.compressed
+        ? `已将较早对话整理到第 ${result.summarized_through_sequence} 条，最近 ${result.recent_turns_kept} 轮保持原文。`
+        : `当前完整对话不足 ${result.recent_turns_kept + 1} 轮，暂时无需压缩。`);
+    } catch (e) {
+      setError(e.message || "主动压缩失败，原始消息没有变化");
+    } finally {
+      setCompressing(false);
+    }
+  };
+
+  const retryMemory = async () => {
+    if (!activeConversation) return;
+    try {
+      await retryConversationMemory(activeConversation.id);
+      setConversations(previous => previous.map(item => item.id === activeConversation.id
+        ? { ...item, finalization_status: "pending", memory_error_code: null }
+        : item));
+    } catch (e) {
+      setError(e.message || "记忆整理重试失败");
+    }
   };
 
   const controlRun = async (run, action) => {
@@ -356,14 +464,30 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
           <button onClick={newConversation} aria-label="创建新旅行对话">＋ 新对话</button>
         </div>
         <div className="conversation-list">
-          {conversations.map(item => (
-            <button key={item.id}
-              className={`conversation-item ${activeId === item.id ? "active" : ""}`}
-              onClick={() => loadConversation(item.id)}>
-              <span>{item.title || "未命名对话"}</span>
-              <small>{new Date(item.updated_at).toLocaleDateString()}</small>
-            </button>
-          ))}
+          {sidebarConversations.map(item => {
+            const attention = ChatState.conversationAttention(item);
+            const active = activeId === item.id;
+            const ariaStatus = attention && attention.kind !== "archived"
+              ? `，${attention.ariaLabel}` : attention?.ariaLabel ? `，${attention.ariaLabel}` : "";
+            return (
+              <button key={item.id}
+                className={`conversation-item ${active ? "active" : ""} attention-${attention?.kind || "none"}`}
+                aria-label={`${item.title || "未命名对话"}${ariaStatus}`}
+                onClick={() => loadConversation(item.id)}>
+                <span className="conversation-item-main">
+                  <strong>{item.title || "未命名对话"}</strong>
+                  {attention && attention.kind !== "archived" && (
+                    <span className={`conversation-attention ${attention.kind}`} aria-label={attention.ariaLabel}>
+                      {attention.kind === "planning" && <i className="conversation-spinner" aria-hidden="true" />}
+                      {attention.kind === "unread" && <i className="conversation-unread-dot" aria-hidden="true" />}
+                      {attention.label}
+                    </span>
+                  )}
+                </span>
+                <small>{new Date(item.updated_at).toLocaleDateString()}{attention?.kind === "archived" ? " · 已归档" : ""}</small>
+              </button>
+            );
+          })}
         </div>
       </aside>
       <main className="chat-main">
@@ -372,8 +496,21 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
             aria-expanded={sidebarOpen} aria-label="打开旅行对话列表">☰</button>
           <div className="chat-title-copy">
             <h2>和途途聊旅行</h2>
-            <p>问一个旅行问题，或把一个模糊念头慢慢变成可出发的行程。</p>
+            <p>{conversationArchived ? "这段对话已归档，途途正在把有用的旅行习惯整理进画像。" : "问一个旅行问题，或把一个模糊念头慢慢变成可出发的行程。"}</p>
           </div>
+          {activeConversation && !conversationArchived && (
+            <div className="chat-memory-actions">
+              {hasConversationMessages && <button className="chat-compress-btn" disabled={compressing} onClick={compressCurrent} aria-label="立即压缩较早的完整对话轮次">
+                <span aria-hidden="true">≋</span>{compressing ? "正在压缩…" : "主动压缩"}
+              </button>}
+              <button className="chat-archive-btn" onClick={archiveCurrent}>归档对话</button>
+            </div>
+          )}
+          {conversationArchived && (
+            <span className={`memory-finalization ${activeConversation.finalization_status || "pending"}`}>
+              {activeConversation.finalization_status === "succeeded" ? "记忆已整理" : activeConversation.finalization_status === "failed" ? "记忆整理失败" : "记忆整理中"}
+            </span>
+          )}
           <div className="chat-guide" role="img" aria-label="途途，旅行向导">
             <span className="guide-sun" aria-hidden="true" />
             <span className="guide-map" aria-hidden="true" />
@@ -382,6 +519,9 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
           </div>
           {activeRuns.length > 0 && <span className="chat-task-count">{activeRuns.length} 个旅程在进行</span>}
         </div>
+        {compressionFeedback && <div className="chat-compression-feedback" role="status">
+          <span aria-hidden="true">✓</span>{compressionFeedback}
+        </div>}
         <div className="chat-feed" role="log" aria-label="旅行对话活动" aria-live="off">
           {loading && <div className="chat-empty">正在恢复对话…</div>}
           {!loading && activityItems.length === 0 && (
@@ -439,7 +579,15 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
             ))}
           </div>
         )}
-        <div className="chat-composer-wrap">
+        <div className={`chat-composer-wrap ${conversationArchived ? "archived" : ""}`}>
+          {conversationArchived ? (
+            <div className="archived-conversation-note">
+              <div><span>ARCHIVED</span><strong>这段旅途对话已经收好</strong><small>继续聊时会创建新对话，并使用已整理完成的最新记忆。</small></div>
+              {activeConversation.finalization_status === "failed"
+                ? <button onClick={retryMemory}>重新整理记忆</button>
+                : <button onClick={newConversation}>开始新对话</button>}
+            </div>
+          ) : <>
           <div className="chat-composer">
             {composerTarget && (
               <div className="composer-target">
@@ -462,6 +610,7 @@ function ChatPage({ currentUsername, onRequestLogin, onOpenPlan }) {
             </button>
           </div>
           <small className="composer-hint">{composerTarget ? "这条内容会发送到指定任务" : "规划会在后台继续，你可以放心离开或接着聊天"}</small>
+          </>}
         </div>
       </main>
     </div>
@@ -581,10 +730,24 @@ function PlanningBriefCard({ brief, onUpdate, onSubmit, onDiscard }) {
   const [localError, setLocalError] = React.useState("");
   const editable = ["collecting", "ready"].includes(brief.status);
   React.useEffect(() => setForm(brief.data || {}), [brief.data]);
+  const constraints = form.trip_constraints || [];
+  const excludedIds = form.excluded_memory_fact_ids || [];
+  const memory = brief.memory_context || { status: "none", applied_facts: [], excluded_facts: [] };
+  const makeConstraint = () => ({
+    id: (window.crypto?.randomUUID?.() || `constraint-${Date.now()}`),
+    category: "other_travel_preference", value_text: "", polarity: "fact", source: "manual",
+  });
   const persistForm = async () => {
     const updated = await updatePlanningBrief(brief.id, {
-      ...form,
-      days: form.days ? Number(form.days) : undefined,
+      destination: form.destination ?? "",
+      start_date: form.start_date ?? "",
+      end_date: form.end_date ?? "",
+      days: form.days === "" ? null : Number(form.days),
+      trip_budget: form.trip_budget ?? form.budget ?? "",
+      trip_constraints: constraints.filter(item => item.value_text?.trim()).map(item => ({
+        ...item, value_text: item.value_text.trim(), source: item.source || "manual",
+      })),
+      excluded_memory_fact_ids: excludedIds,
     });
     onUpdate(updated);
     return updated;
@@ -623,10 +786,7 @@ function PlanningBriefCard({ brief, onUpdate, onSubmit, onDiscard }) {
     ["start_date", "开始日期", "date"],
     ["end_date", "结束日期", "date"],
     ["days", "天数", "number"],
-    ["attraction_preference", "景点偏好", "text"],
-    ["budget", "预算偏好", "text"],
-    ["food_preference", "餐饮偏好", "text"],
-    ["habit_preference", "旅行节奏与习惯", "text"],
+    ["trip_budget", "本次预算", "text"],
   ];
   const view = ChatState.briefViewModel(brief);
   const runAction = async (name, action) => {
@@ -634,6 +794,23 @@ function PlanningBriefCard({ brief, onUpdate, onSubmit, onDiscard }) {
     setBusy(name); setLocalError("");
     try { await action(); }
     catch (e) { setLocalError(e.message || "操作失败，请重试"); }
+    finally { setBusy(""); }
+  };
+  const updateMemoryExclusions = async factId => {
+    const nextIds = excludedIds.includes(factId)
+      ? excludedIds.filter(id => id !== factId)
+      : [...excludedIds, factId];
+    setBusy(`memory-${factId}`); setLocalError("");
+    try {
+      const updated = await updatePlanningBrief(brief.id, { excluded_memory_fact_ids: nextIds });
+      onUpdate(updated);
+    } catch (e) { setLocalError(e.message || "本次记忆设置保存失败"); }
+    finally { setBusy(""); }
+  };
+  const refreshMemory = async () => {
+    setBusy("memory-refresh"); setLocalError("");
+    try { onUpdate(await refreshPlanningBriefMemory(brief.id)); }
+    catch (e) { setLocalError(e.message || "长期记忆重新匹配失败"); }
     finally { setBusy(""); }
   };
   return (
@@ -659,6 +836,22 @@ function PlanningBriefCard({ brief, onUpdate, onSubmit, onDiscard }) {
               />
             </label>
           ))}
+          <div className="brief-constraint-editor">
+            <div className="brief-constraint-title"><strong>本次旅行要求</strong><span>来自当前对话或你的手动调整</span></div>
+            {constraints.map((item, index) => (
+              <div className="brief-constraint-row" key={item.id || index}>
+                <select value={item.category} onChange={e => setForm({ ...form, trip_constraints: constraints.map((entry, i) => i === index ? { ...entry, category: e.target.value } : entry) })}>
+                  {Object.entries(MEMORY_CATEGORY_LABELS).filter(([key]) => key !== "destination_history").map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+                <select value={item.polarity || "fact"} onChange={e => setForm({ ...form, trip_constraints: constraints.map((entry, i) => i === index ? { ...entry, polarity: e.target.value } : entry) })}>
+                  {Object.entries(MEMORY_POLARITY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+                <input value={item.value_text || ""} placeholder="例如：每天最多安排三个景点" onChange={e => setForm({ ...form, trip_constraints: constraints.map((entry, i) => i === index ? { ...entry, value_text: e.target.value } : entry) })} />
+                <button type="button" aria-label="移除这条本次要求" onClick={() => setForm({ ...form, trip_constraints: constraints.filter((_, i) => i !== index) })}>×</button>
+              </div>
+            ))}
+            <button type="button" className="brief-add-constraint" onClick={() => setForm({ ...form, trip_constraints: [...constraints, makeConstraint()] })}>＋ 添加一条本次要求</button>
+          </div>
           <button className="brief-save" disabled={!!busy} onClick={save}>{busy === "save" ? "保存中…" : "保存这份理解"}</button>
         </div>
       ) : (
@@ -673,12 +866,45 @@ function PlanningBriefCard({ brief, onUpdate, onSubmit, onDiscard }) {
           </div>
           {view.preferences.length > 0 && (
             <dl className="brief-preferences">
-              {view.preferences.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+              {view.preferences.map(([label, value]) => <div key={`${label}:${value}`}><dt>{label}</dt><dd>{value}</dd></div>)}
             </dl>
           )}
           {view.usesDefaults && (
             <p className="brief-defaults">没有特别说明的预算、餐饮或节奏偏好，将采用舒适均衡的推荐方案。</p>
           )}
+        </div>
+      )}
+      {(memory.applied_facts?.length > 0 || memory.excluded_facts?.length > 0 || memory.status === "failed") && (
+        <div className="brief-memory-panel">
+          <div className="brief-memory-head">
+            <div><span>LONG-TERM MEMORY</span><strong>这次自动带入的旅行记忆</strong><small>记忆版本 {memory.revision || 0}</small></div>
+            {editable && <button disabled={!!busy} onClick={refreshMemory}>{busy === "memory-refresh" ? "匹配中…" : "重新匹配"}</button>}
+          </div>
+          {memory.status === "failed" && <p className="brief-memory-warning">长期记忆暂时没有匹配成功。本次明确需求仍会保留，你可以重试或直接继续规划。</p>}
+          {!!memory.applied_facts?.length && <div className="brief-memory-list">{memory.applied_facts.map(fact => {
+            const presentation = ChatState.memoryFactPresentation(fact);
+            return (
+              <div className={`brief-memory-fact polarity-${presentation.tone}`} key={fact.fact_id}>
+                <div className="brief-memory-copy">
+                  <span>{MEMORY_CATEGORY_LABELS[fact.category] || "旅行记忆"} · {MEMORY_SCOPE_LABELS[fact.scope_type] || fact.scope_type}</span>
+                  <div className="brief-memory-decision"><b>{presentation.badge}</b><strong>{fact.value_text}</strong></div>
+                  <small>{presentation.effect}</small>
+                </div>
+                <em>来自长期记忆</em>
+                {editable && <button disabled={!!busy} aria-label={`${presentation.excludeAction}：${fact.value_text}`} onClick={() => updateMemoryExclusions(fact.fact_id)}>{presentation.excludeAction}</button>}
+              </div>
+            );
+          })}</div>}
+          {!!memory.excluded_facts?.length && <details className="brief-memory-excluded"><summary>本次已停用的记忆（{memory.excluded_facts.length}）</summary>{memory.excluded_facts.map(fact => {
+            const presentation = ChatState.memoryFactPresentation(fact);
+            return (
+              <div key={fact.fact_id}>
+                <span><b>{presentation.badge}</b>{fact.value_text}</span>
+                {editable && <button disabled={!!busy} aria-label={`${presentation.restoreAction}：${fact.value_text}`} onClick={() => updateMemoryExclusions(fact.fact_id)}>{presentation.restoreAction}</button>}
+              </div>
+            );
+          })}</details>}
+          <p className="brief-memory-footnote">这里只影响本次旅行；如需彻底忘记，请前往“我的画像”。</p>
         </div>
       )}
       {brief.missing_fields?.length > 0 && (
@@ -1055,10 +1281,11 @@ function PlanPage({ onRequestLogin, currentUsername, onPhaseChange, onPlanReady,
   ];
 
   // 画像偏好行（仅渲染非空字段；全空则整卡隐藏）
+  const activeProfileFacts = profile?.active_facts || [];
   const profileRows = profile ? [
-    { key: "attr", label: "景点", cls: "attr", items: profile.attraction_prefs || [] },
-    { key: "food", label: "餐饮", cls: "food", items: profile.food_prefs || [] },
-    { key: "habit", label: "习惯", cls: "habit", items: profile.habit_prefs || [] },
+    { key: "attr", label: "景点", cls: "attr", items: activeProfileFacts.filter(item => item.category === "attraction_preference").map(item => item.value_text) },
+    { key: "food", label: "餐饮", cls: "food", items: activeProfileFacts.filter(item => ["food_preference", "dietary_requirement"].includes(item.category)).map(item => item.value_text) },
+    { key: "habit", label: "习惯", cls: "habit", items: activeProfileFacts.filter(item => ["travel_pace", "transport_preference", "schedule_preference"].includes(item.category)).map(item => item.value_text) },
   ].filter(r => r.items.length) : [];
 
   // ── 加载中 ──
@@ -1791,38 +2018,78 @@ function TagEditor({ label, hint, tags, onChange }) {
   );
 }
 
-function ProfilePage({ currentUsername }) {
-  const [prefs, setPrefs] = React.useState({
-    attraction_prefs: [],
-    food_prefs: [],
-    habit_prefs: [],
-    visited_destinations: [],
-  });
-  const [stats, setStats] = React.useState({ trips: 0, cities: 0 });
-  const [saved, setSaved] = React.useState(false);
-  const [loading, setLoading] = React.useState(true);
-  // 用户改过标签且未保存时为 true，此时自动刷新不覆盖编辑中的内容
-  const dirtyRef = React.useRef(false);
+const MEMORY_CATEGORY_LABELS = {
+  attraction_preference: "旅行主题", food_preference: "餐饮偏好", dietary_requirement: "饮食要求",
+  travel_pace: "旅行节奏", budget_style: "预算习惯", transport_preference: "交通偏好",
+  accommodation_preference: "住宿偏好", schedule_preference: "时间习惯", companion_context: "同行情境",
+  accessibility_need: "无障碍需求", destination_history: "去过的地方", other_travel_preference: "其他偏好",
+};
+const MEMORY_POLARITY_LABELS = { prefer: "喜欢", avoid: "避开", require: "需要", fact: "事实" };
+const MEMORY_SCOPE_LABELS = { global: "所有旅行", destination: "特定目的地", companion: "特定同行人", destination_companion: "目的地与同行人" };
 
-  const applyProfile = (data) => {
-    setPrefs({
-      attraction_prefs: data.attraction_prefs || [],
-      food_prefs: data.food_prefs || [],
-      habit_prefs: data.habit_prefs || [],
-      visited_destinations: data.visited_destinations || [],
-    });
-    setStats({
-      trips: data.trip_count || 0,
-      cities: (data.visited_destinations || []).length,
-    });
+function MemoryFactCard({ fact, candidate = false, onChanged }) {
+  const [editing, setEditing] = React.useState(false);
+  const [value, setValue] = React.useState(fact.value_text);
+  const [category, setCategory] = React.useState(fact.category);
+  const [polarity, setPolarity] = React.useState(fact.polarity);
+  const [scopeType, setScopeType] = React.useState(fact.scope_type);
+  const [destination, setDestination] = React.useState(fact.scope_key?.destination || "");
+  const [companion, setCompanion] = React.useState(fact.scope_key?.companion || "");
+  const [busy, setBusy] = React.useState(false);
+  const scopeDetail = Object.values(fact.scope_key || {}).filter(Boolean).join(" · ");
+  const run = async action => {
+    setBusy(true);
+    try { await action(); await onChanged(); setEditing(false); }
+    catch (e) { alert(e.message || "操作失败"); }
+    finally { setBusy(false); }
   };
+  return (
+    <article className={`memory-fact-card ${candidate ? "candidate" : "active"}`}>
+      <div className="memory-fact-mark" aria-hidden="true">{candidate ? "?" : "✓"}</div>
+      <div className="memory-fact-body">
+        <div className="memory-fact-meta">
+          <span>{MEMORY_CATEGORY_LABELS[fact.category] || fact.category}</span>
+          <em>{MEMORY_POLARITY_LABELS[fact.polarity] || fact.polarity}</em>
+          <small>{MEMORY_SCOPE_LABELS[fact.scope_type] || fact.scope_type}{scopeDetail ? ` · ${scopeDetail}` : ""}</small>
+        </div>
+        {editing ? (
+          <div className="memory-inline-edit">
+            <select value={category} onChange={e => setCategory(e.target.value)}>{Object.entries(MEMORY_CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+            <select value={polarity} onChange={e => setPolarity(e.target.value)}>{Object.entries(MEMORY_POLARITY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+            <select value={scopeType} onChange={e => setScopeType(e.target.value)}>{Object.entries(MEMORY_SCOPE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+            {(scopeType === "destination" || scopeType === "destination_companion") && <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="目的地，例如：日本" />}
+            {(scopeType === "companion" || scopeType === "destination_companion") && <input value={companion} onChange={e => setCompanion(e.target.value)} placeholder="同行情境，例如：带孩子" />}
+            <input value={value} onChange={e => setValue(e.target.value)} autoFocus />
+            <button disabled={busy || !value.trim() || ((scopeType === "destination" || scopeType === "destination_companion") && !destination.trim()) || ((scopeType === "companion" || scopeType === "destination_companion") && !companion.trim())} onClick={() => run(() => updateMemoryFact(fact.id, {
+              category, value_text: value.trim(), polarity, scope_type: scopeType,
+              scope_key: scopeType === "global" ? {} : {
+                ...(scopeType === "destination" || scopeType === "destination_companion" ? { destination: destination.trim() } : {}),
+                ...(scopeType === "companion" || scopeType === "destination_companion" ? { companion: companion.trim() } : {}),
+              },
+            }))}>保存</button>
+            <button disabled={busy} onClick={() => { setValue(fact.value_text); setEditing(false); }}>取消</button>
+          </div>
+        ) : <strong>{fact.value_text}</strong>}
+        <p>{candidate ? (fact.sensitivity === "protected" ? "这条信息较敏感，确认后才会用于新的旅行对话。" : "途途从对话中推测了这条习惯，请你确认。") : `来源：${fact.source_kind === "manual" ? "你手动添加" : fact.source_kind === "legacy" ? "旧画像迁移" : "旅行对话"}`}</p>
+      </div>
+      <div className="memory-fact-actions">
+        {candidate && <button className="memory-approve" disabled={busy} onClick={() => run(() => approveMemoryFact(fact.id))}>确认记住</button>}
+        {!editing && <button disabled={busy} onClick={() => setEditing(true)}>{candidate ? "编辑并确认" : "编辑"}</button>}
+        <button className="memory-forget" disabled={busy} onClick={() => run(() => deleteMemoryFact(fact.id))}>{candidate ? "忽略" : "忘记"}</button>
+      </div>
+    </article>
+  );
+}
 
-  // 画像更新 Agent 在规划完成后异步落库，停留本页时靠聚焦/轮询拉到最新画像
+function ProfilePage({ currentUsername }) {
+  const [profile, setProfile] = React.useState({ revision: 0, active_facts: [], candidate_facts: [], trip_count: 0 });
+  const [loading, setLoading] = React.useState(true);
+  const [form, setForm] = React.useState({ category: "attraction_preference", value_text: "", polarity: "prefer", scope_type: "global", destination: "", companion: "" });
+  const [adding, setAdding] = React.useState(false);
   const refreshProfile = async () => {
-    if (dirtyRef.current) return;
     try {
       const data = await getProfile();
-      if (data && !dirtyRef.current) applyProfile(data);
+      if (data) setProfile(data);
     } catch {}
   };
 
@@ -1831,35 +2098,34 @@ function ProfilePage({ currentUsername }) {
     const onVisible = () => { if (!document.hidden) refreshProfile(); };
     window.addEventListener("focus", onVisible);
     document.addEventListener("visibilitychange", onVisible);
-    const timer = setInterval(refreshProfile, 15000);
     return () => {
       window.removeEventListener("focus", onVisible);
       document.removeEventListener("visibilitychange", onVisible);
-      clearInterval(timer);
     };
   }, []);
-
-  const save = async () => {
+  const addFact = async e => {
+    e.preventDefault();
+    if (!form.value_text.trim()) return;
+    setAdding(true);
     try {
-      const data = await saveProfile(prefs);
-      dirtyRef.current = false;
-      if (data) applyProfile(data);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2200);
-    } catch (e) {
-      alert(e.message || "保存失败");
-    }
+      const scope_key = form.scope_type === "global" ? {} : {
+        ...(form.scope_type === "destination" || form.scope_type === "destination_companion" ? { destination: form.destination.trim() } : {}),
+        ...(form.scope_type === "companion" || form.scope_type === "destination_companion" ? { companion: form.companion.trim() } : {}),
+      };
+      const { destination, companion, ...payload } = form;
+      await createMemoryFact({ ...payload, value_text: form.value_text.trim(), scope_key });
+      setForm(previous => ({ ...previous, value_text: "", destination: "", companion: "" }));
+      await refreshProfile();
+    } catch (e) { alert(e.message || "添加失败"); }
+    finally { setAdding(false); }
   };
 
-  const fields = [
-    { key: "attraction_prefs", label: "喜欢的旅行主题", hint: "回车或逗号添加" },
-    { key: "habit_prefs",      label: "节奏与游玩方式",  hint: "影响每天的景点数量" },
-    { key: "food_prefs",       label: "饮食偏好 / 忌口",  hint: "用于餐厅推荐" },
-    { key: "visited_destinations", label: "去过的城市", hint: "规划时作为参考" },
-  ];
-
   const username = currentUsername || getAuth()?.username || "旅行者";
-  const initial = username.slice(-1);
+  const cityCount = profile.active_facts.filter(item => item.category === "destination_history").length;
+  const groups = Object.entries(profile.active_facts.reduce((acc, fact) => {
+    const key = MEMORY_CATEGORY_LABELS[fact.category] || "其他记忆";
+    (acc[key] ||= []).push(fact); return acc;
+  }, {}));
 
   return (
     <div className="page page-fade">
@@ -1868,7 +2134,7 @@ function ProfilePage({ currentUsername }) {
           <div className="eyebrow">PROFILE · 旅行画像</div>
           <h1>我的旅行画像</h1>
         </div>
-        <div className="head-note">这些偏好会在每次规划时<br />自动作为默认参考</div>
+        <div className="head-note">只把你确认过的旅行习惯<br />带进下一段对话</div>
       </div>
 
       <div className="profile-grid">
@@ -1877,35 +2143,35 @@ function ProfilePage({ currentUsername }) {
             <Mascot size={120} pose="idle" />
           </div>
           <div className="pa-name">{username}</div>
-          <div className="pa-sub">途途已陪你走过 {stats.cities} 座城</div>
+          <div className="pa-sub">记忆版本 {profile.revision} · 每段对话都会冻结一份独立快照</div>
           <div className="pa-stats">
-            <div className="pa-stat"><div className="ps-n">{stats.trips}</div><div className="ps-l">趟旅程</div></div>
-            <div className="pa-stat"><div className="ps-n">{stats.cities}</div><div className="ps-l">座城市</div></div>
+            <div className="pa-stat"><div className="ps-n">{profile.trip_count}</div><div className="ps-l">趟旅程</div></div>
+            <div className="pa-stat"><div className="ps-n">{cityCount}</div><div className="ps-l">座城市</div></div>
             <div className="pa-stat">
-              <div className="ps-n">{(prefs.attraction_prefs.length + prefs.food_prefs.length + prefs.habit_prefs.length)}</div>
-              <div className="ps-l">个偏好</div>
+              <div className="ps-n">{profile.active_facts.length}</div><div className="ps-l">条记忆</div>
             </div>
           </div>
         </aside>
 
         <div>
-          {loading ? (
-            <div style={{ color: "var(--ink-3)", padding: "40px 0" }}>加载中…</div>
-          ) : (
-            fields.map(f => (
-              <TagEditor
-                key={f.key}
-                label={f.label}
-                hint={f.hint}
-                tags={prefs[f.key]}
-                onChange={(v) => { dirtyRef.current = true; setPrefs(p => ({ ...p, [f.key]: v })); }}
-              />
-            ))
-          )}
-          <div className="pf-actions">
-            <button className="go-btn" onClick={save} disabled={loading}>保存画像</button>
-            <span className={`save-hint ${saved ? "show" : ""}`}>✓ 已保存，下次规划自动生效</span>
-          </div>
+          <form className="memory-add-card" onSubmit={addFact}>
+            <div><span>ADD A MEMORY</span><strong>告诉途途一条稳定的旅行习惯</strong></div>
+            <div className="memory-add-grid">
+              <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{Object.entries(MEMORY_CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+              <select value={form.polarity} onChange={e => setForm({ ...form, polarity: e.target.value })}>{Object.entries(MEMORY_POLARITY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+              <select value={form.scope_type} onChange={e => setForm({ ...form, scope_type: e.target.value })}>{Object.entries(MEMORY_SCOPE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+              {(form.scope_type === "destination" || form.scope_type === "destination_companion") && <input value={form.destination} onChange={e => setForm({ ...form, destination: e.target.value })} placeholder="目的地，例如：日本" required />}
+              {(form.scope_type === "companion" || form.scope_type === "destination_companion") && <input value={form.companion} onChange={e => setForm({ ...form, companion: e.target.value })} placeholder="同行情境，例如：带孩子" required />}
+              <input className="memory-value-input" value={form.value_text} onChange={e => setForm({ ...form, value_text: e.target.value })} placeholder="例如：旅行时通常喜欢慢节奏，每天不超过三个景点" />
+              <button disabled={adding || !form.value_text.trim()}>{adding ? "正在记住…" : "记住这条"}</button>
+            </div>
+          </form>
+          {loading ? <div className="memory-loading">正在翻开你的旅行档案…</div> : <>
+            {profile.candidate_facts.length > 0 && <section className="memory-section candidate-section"><header><span>NEEDS YOUR WORD</span><h2>待你确认</h2><p>推断或较敏感的信息不会自动用于新对话。</p></header><div className="memory-fact-list">{profile.candidate_facts.map(fact => <MemoryFactCard key={fact.id} fact={fact} candidate onChanged={refreshProfile} />)}</div></section>}
+            <section className="memory-section"><header><span>TRAVEL MEMORY</span><h2>途途已经记住</h2><p>当前对话不会中途刷新；这些变化会从下一段新对话开始生效。</p></header>
+              {groups.length ? groups.map(([label, facts]) => <div className="memory-group" key={label}><h3>{label}<small>{facts.length}</small></h3><div className="memory-fact-list">{facts.map(fact => <MemoryFactCard key={fact.id} fact={fact} onChanged={refreshProfile} />)}</div></div>) : <div className="memory-empty">还没有长期旅行记忆。你可以先添加一条，或在聊完后归档对话。</div>}
+            </section>
+          </>}
         </div>
       </div>
     </div>

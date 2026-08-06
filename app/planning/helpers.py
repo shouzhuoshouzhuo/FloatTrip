@@ -322,7 +322,17 @@ def dinner_anchor_spot(day: dict[str, Any]) -> dict[str, Any] | None:
 
 # ─── 结构化 LLM 调用（含 None 重试守卫）────────────────────────
 
-def invoke_structured(llm: Any, messages: list[tuple[str, str]], *, retries: int = 3) -> Any:
+def _message_char_count(message: Any) -> int:
+    """Estimate a LangChain message or legacy ``(role, content)`` pair."""
+    if isinstance(message, tuple) and len(message) == 2:
+        role, content = message
+        return len(str(role)) + len(str(content))
+    role = getattr(message, "type", None) or getattr(message, "role", None) or ""
+    content = getattr(message, "content", "")
+    return len(str(role)) + len(str(content))
+
+
+def invoke_structured(llm: Any, messages: list[Any], *, retries: int = 3) -> Any:
     """调用结构化输出 LLM，对偶发返回 None 做重试。
 
     DeepSeek function_calling 模式偶尔返回 None；重试若干次，
@@ -333,7 +343,7 @@ def invoke_structured(llm: Any, messages: list[tuple[str, str]], *, retries: int
     - 出现 None 时打印警告，标明是第几次重试
     """
     # 估算输入 token（粗略：字符数 / 2 ≈ token 数，仅供参考）
-    total_chars = sum(len(role) + len(content) for role, content in messages)
+    total_chars = sum(_message_char_count(message) for message in messages)
     schema_name = getattr(getattr(llm, "schema", None), "__name__", None)
     # 从 llm 对象尝试取 schema 名（with_structured_output 绑定的 Pydantic 类）
     if schema_name is None:
@@ -374,12 +384,12 @@ def invoke_structured(llm: Any, messages: list[tuple[str, str]], *, retries: int
 
 async def ainvoke_structured(
     llm: Any,
-    messages: list[tuple[str, str]],
+    messages: list[Any],
     *,
     retries: int = 3,
 ) -> Any:
     """异步结构化 LLM 调用，保持与同步版本相同的 None 重试语义。"""
-    total_chars = sum(len(role) + len(content) for role, content in messages)
+    total_chars = sum(_message_char_count(message) for message in messages)
     for attempt in range(retries):
         started = time.perf_counter()
         async with provider_slot("llm"):

@@ -45,9 +45,9 @@ class ChatAgentTests(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_prompt_tells_the_model_not_to_repeat_missing_field_questions(self):
-        system, _human = dialogue_messages(self._context("不告诉你"))
-        self.assertIn("不得原样重复上一轮的追问", system[1])
-        self.assertIn("brief_patch 为空", system[1])
+        messages = dialogue_messages(self._context("不告诉你"))
+        self.assertIn("不得原样重复上一轮的追问", messages[0].content)
+        self.assertIn("brief_patch 为空", messages[0].content)
 
     def test_chinese_dialogue_evaluation_fixture_has_actionable_semantics(self):
         cases = json.loads(
@@ -259,8 +259,11 @@ class ChatAgentTests(unittest.IsolatedAsyncioTestCase):
                 result = await dialogue_agent_node({"dialogue_context": context}, llm=llm)
 
                 self.assertEqual(len(llm.calls), 1)
-                self.assertIn(case["message"], llm.calls[0][-1][1])
-                self.assertIn("available_targets", llm.calls[0][-1][1])
+                self.assertIn(case["message"], llm.calls[0][-1].content)
+                self.assertIn(
+                    "available_targets",
+                    "\n".join(str(message.content) for message in llm.calls[0]),
+                )
                 for key, expected in case["decision"].items():
                     actual = result["decision"][key]
                     if key in {"brief_patch", "target"}:
@@ -277,7 +280,7 @@ class ChatAgentTests(unittest.IsolatedAsyncioTestCase):
         result = await dialogue_agent_node({"dialogue_context": self._context("十月适合去云南吗？")}, llm=llm)
         self.assertEqual(result["decision"]["intent"], "travel_qa")
         self.assertEqual(len(llm.calls), 2)
-        self.assertIn("重新输出", llm.calls[1][-1][1])
+        self.assertIn("重新输出", llm.calls[1][-1].content)
 
     async def test_two_failures_raise_safe_error_without_rule_fallback(self):
         llm = FakeStructuredLlm([RuntimeError("provider down"), None])

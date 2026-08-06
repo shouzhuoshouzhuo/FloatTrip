@@ -6,5 +6,6 @@
   {"name":"纠正目的地","message":"不去南京了，改成都","intent":"update_brief","patch":{"destination":"成都"}},
   {"name":"旅行咨询","message":"十月适合去云南吗？","intent":"travel_qa","patch":{}},
   {"name":"行程修改","message":"第三天下午留给休息","intent":"modify_itinerary","patch":{}},
-  {"name":"任务控制","message":"把正在规划的那个停掉","intent":"run_control","patch":{}}
+  {"name":"任务控制","message":"把正在规划的那个停掉","intent":"run_control","patch":{}},
+  {"name":"动态同行与节奏约束","message":"这次带孩子，行程慢一点","intent":"update_brief","patch":{"trip_constraints":[{"category":"companion_context","value_text":"带孩子出行","polarity":"fact"},{"category":"travel_pace","value_text":"行程慢一点","polarity":"prefer"}]}}
 ]

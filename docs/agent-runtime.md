@@ -28,6 +28,14 @@ Chat Graph / Planning Graph
 | `RUNTIME_LLM_CONCURRENCY` | 8 | LLM 调用容量 |
 | `RUNTIME_AMAP_CONCURRENCY` | 8 | 高德调用容量 |
 | `RUNTIME_CHECKPOINT_DB` | `data/langgraph-checkpoints.db` | LangGraph SQLite checkpoint 文件 |
+| `CHAT_CONTEXT_BUDGET_TOKENS` | 3000 | Chat 最终上下文预算 |
+| `CHAT_SUMMARY_TRIGGER_TOKENS` | 2600 | 触发累计摘要的估算 token 阈值 |
+| `CHAT_SUMMARY_TARGET_TOKENS` | 600 | 结构化摘要目标大小 |
+| `CHAT_RECENT_TURNS` | 6 | 压缩后保留的完整最近轮次 |
+| `CHAT_MAX_MESSAGE_TOKENS` | 1200 | 单条用户消息预算 |
+| `CHAT_SUMMARY_MODEL` | 当前 provider 默认模型 | 可选摘要模型覆盖 |
+| `MEMORY_EXTRACTION_MODEL` | 当前 provider 默认模型 | 可选长期记忆提取模型覆盖 |
+| `MEMORY_EXTRACTION_INPUT_TOKENS` | 6000 | 归档提取的单批输入预算 |
 
 SQLite 主库启用 WAL 与 30 秒 busy timeout。Run 事件序列在单个 Run 内单调递增；
 生命周期、进度、等待交互、错误、最终消息和结果关联为持久事件，token delta 与
@@ -60,5 +68,6 @@ exactly-once 执行或跨节点 SSE fan-out。若部署多个应用实例，需�
 ## 观测
 
 认证用户可读取 `/api/runtime/metrics`，其中包括排队时长、运行时长、各类型活动
-Run、终态计数、失败原因和 provider 容量统计。Runtime 同时输出 JSON 结构化日志，
-字段包含 `event`、`run_id`、`kind`、状态、排队/运行时长和失败原因。
+Run、终态计数、失败原因、provider 容量，以及会话估算 token、摘要/提取结果和归档
+整理延迟。Runtime 同时输出 JSON 结构化日志；记忆日志只记录 conversation、revision、
+序列范围、计数和状态，不记录事实正文或原始消息。
