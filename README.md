@@ -14,7 +14,7 @@
 [![Eval: pass@k](https://img.shields.io/badge/Eval-pass%40k%20%2F%20pass%5Ek-brightgreen)](tests/EVAL_GUIDE.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[产品演示](#demo) · [快速开始](#quick-start) · [系统架构](#architecture) · [评测体系](#evaluation)
+[产品演示](#demo) · [移动端 App](#mobile-app) · [快速开始](#quick-start) · [系统架构](#architecture) · [评测体系](#evaluation)
 
 </div>
 
@@ -63,6 +63,73 @@
     </td>
   </tr>
 </table>
+
+---
+
+<a id="mobile-app"></a>
+
+## 📱 轻舟移动端 App
+
+`mobile-app/` 是与本项目 FastAPI 服务直接联调的 Bare React Native 客户端（iOS / Android）。它不是 Web 的静态壳：登录、对话、Planning Brief、持久化 Run、SSE 进度、行程编辑和旅行画像都复用同一套后端协议。
+
+- **自然语言规划**：一句话描述目的地、日期和同行人；对话会补齐必要条件，生成可确认的 Planning Brief。
+- **真实后端进度**：规划任务通过可恢复的 SSE Run 推送；客户端按后端 `planning_run.progress` 阶段展示理解需求、搜集地点、编排行程、核查冲突与完善细节。
+- **地图与行程编辑**：iOS 优先使用高德原生地图；未接入厂商二进制的模拟器自动使用 Apple MapKit。地点、路线、日期和底部行程卡联动，支持编辑、优化、撤销和重做。
+- **旅行画像**：偏好、避雷和必须满足的条件可随时维护，并在下一次规划中透明地带入。
+- **离线演示模式**：服务不可用时可进入本地演示，方便体验完整界面和交互。
+
+<table>
+  <tr>
+    <td width="33.33%" valign="top">
+      <img src="./static/images/readme/mobile/app-login.png" alt="轻舟 App 登录页" width="100%" />
+      <p align="center"><b>登录与演示入口</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <img src="./static/images/readme/mobile/app-home.png" alt="轻舟 App 对话式规划首页" width="100%" />
+      <p align="center"><b>一句话开始旅行规划</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <img src="./static/images/readme/mobile/app-planning-brief.png" alt="轻舟 App Planning Brief 确认卡" width="100%" />
+      <p align="center"><b>结构化确认出行条件</b></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="33.33%" valign="top">
+      <img src="./static/images/readme/mobile/app-live-planning.png" alt="轻舟 App 实时规划进度" width="100%" />
+      <p align="center"><b>后端 SSE 实时规划进度</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <img src="./static/images/readme/mobile/app-profile.png" alt="轻舟 App 旅行画像页" width="100%" />
+      <p align="center"><b>可管理的旅行画像</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <img src="./static/images/readme/mobile/app-map-itinerary.png" alt="轻舟 App 地图联动行程" width="100%" />
+      <p align="center"><b>地图联动的可编辑行程</b></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="33.33%" valign="top">
+      <img src="./static/images/readme/mobile/app-trip-editor.png" alt="轻舟 App 行程编辑与路线优化" width="100%" />
+      <p align="center"><b>路线优化、替换地点与保存修改</b></p>
+    </td>
+  </tr>
+</table>
+
+### 运行移动端
+
+需要 Node.js 22、Xcode（iOS）或 Android Studio（Android）。先在仓库根目录启动后端，再启动移动端：
+
+```bash
+# 仓库根目录：启动 FastAPI
+./.venv/bin/uvicorn app.main:app --reload --port 8000
+
+# 新终端：安装并运行 App
+cd mobile-app
+npm ci
+npm run ios       # 或 npm run android
+```
+
+移动端包含 Jest 单测、类型检查、Lint 和 Maestro UI 流程；详细配置、地图 Key 与真机构建说明见 [`mobile-app/README.md`](mobile-app/README.md)。
 
 
 ---
@@ -115,6 +182,7 @@ Run 的生命周期、进度、交互请求与结果均会持久化，客户端�
 | LLM      | DeepSeek / 豆包（`LLM_PROVIDER` 切换，LangChain OpenAI 兼容层） |
 | 地图数据     | 高德地图 Web 服务 API                   |
 | 前端       | JSX 组件化单页（无构建，浏览器内 Babel）         |
+| 移动端     | Bare React Native 0.86 + TypeScript + Fabric（iOS / Android） |
 
 
 ---
@@ -228,6 +296,9 @@ python run.py
 │   │   └── run_eval.py            # 评估入口：--only / --k / --out
 │   └── test_weather_mock.py       # 雨天 mock 冒烟测试
 ├── frontend/          # JSX 组件化单页（main/pages/components/mascot/tweaks-panel/edit/api）
+├── mobile-app/        # React Native 移动端（iOS / Android、原生地图、SSE、Maestro）
+├── mobile-prototype/  # 移动端交互原型与视觉测试
+├── static/images/readme/mobile/ # App README 截图
 ├── run.py             # 启动入口
 └── .env.example       # 环境变量模板
 ```

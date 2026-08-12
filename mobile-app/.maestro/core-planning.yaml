@@ -1,0 +1,40 @@
+appId: com.qingzhou.travel
+name: 轻舟演示规划主链路
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: enter-demo
+- assertVisible: 这次想去哪儿？
+- tapOn:
+    id: plan-prompt
+- inputText: "8月底两个人去滇西北，想慢慢玩7天"
+- tapOn:
+    id: plan-send
+- extendedWaitUntil:
+    visible:
+      id: clarification-0
+    timeout: 5000
+- tapOn:
+    id: clarification-0
+- extendedWaitUntil:
+    visible:
+      id: start-planning
+    timeout: 5000
+- tapOn:
+    id: start-planning
+- assertVisible:
+    id: thought-status
+- tapOn:
+    id: thought-status
+- tapOn:
+    id: thought-status
+- extendedWaitUntil:
+    visible:
+      id: open-complete-trip
+    timeout: 15000
+- tapOn:
+    id: open-complete-trip
+- assertVisible: 推荐地点
+- assertVisible:
+    id: open-trip-editor

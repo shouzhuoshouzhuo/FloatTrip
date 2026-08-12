@@ -1,0 +1,82 @@
+{
+  "name": "qingzhou-mobile",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "lint": "eslint .",
+    "postinstall": "node scripts/patch-react-native-codegen.js",
+    "start": "react-native start",
+    "test": "jest --runInBand",
+    "typecheck": "tsc --noEmit",
+    "doctor": "sh scripts/doctor-mobile.sh",
+    "bundle:check": "react-native bundle --platform ios --dev false --entry-file index.js --bundle-output /tmp/qingzhou-main.jsbundle --assets-dest /tmp/qingzhou-assets",
+    "generate:api": "../.venv/bin/python scripts/export_openapi.py && openapi-typescript openapi.json -o src/api/schema.ts"
+  },
+  "codegenConfig": {
+    "name": "QingzhouMapSpec",
+    "type": "components",
+    "jsSrcsDir": "src/native/specs",
+    "android": {
+      "javaPackageName": "com.qingzhou.travel.map"
+    },
+    "ios": {
+      "components": {
+        "QZAMapView": {
+          "className": "QZAMapView"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@gorhom/bottom-sheet": "^5.2.14",
+    "@react-native-community/netinfo": "^11.4.1",
+    "@react-native-vector-icons/material-design-icons": "^13.1.2",
+    "@react-native/new-app-screen": "0.86.2",
+    "@react-navigation/bottom-tabs": "^7.18.16",
+    "@react-navigation/native": "^7.3.16",
+    "@react-navigation/native-stack": "^7.18.8",
+    "@tanstack/react-query": "^5.101.4",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-draggable-flatlist": "^4.0.3",
+    "react-native-gesture-handler": "^3.1.0",
+    "react-native-keychain": "^10.0.0",
+    "react-native-mmkv": "^4.3.2",
+    "react-native-nitro-modules": "^0.36.5",
+    "react-native-reanimated": "^4.5.3",
+    "react-native-safe-area-context": "^5.5.2",
+    "react-native-screens": "^4.27.0",
+    "react-native-sse": "^1.2.1",
+    "react-native-svg": "^15.15.5",
+    "react-native-worklets": "^0.11.4",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "20.1.0",
+    "@react-native-community/cli-platform-android": "20.1.0",
+    "@react-native-community/cli-platform-ios": "20.1.0",
+    "@react-native/babel-preset": "0.86.2",
+    "@react-native/eslint-config": "0.86.2",
+    "@react-native/jest-preset": "0.86.2",
+    "@react-native/metro-config": "0.86.2",
+    "@react-native/typescript-config": "0.86.2",
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^29.5.13",
+    "@types/react": "^19.2.0",
+    "@types/react-test-renderer": "^19.1.0",
+    "eslint": "^8.19.0",
+    "jest": "^29.6.3",
+    "openapi-typescript": "^7.10.1",
+    "prettier": "2.8.8",
+    "react-test-renderer": "19.2.3",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">= 22.11.0"
+  }
+}

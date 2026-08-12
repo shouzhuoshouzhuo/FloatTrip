@@ -1,0 +1,19 @@
+appId: com.qingzhou.travel
+name: 轻舟旅行画像记忆
+---
+- launchApp
+- runFlow:
+    when:
+      visible:
+        id: enter-demo
+    commands:
+      - tapOn:
+          id: enter-demo
+- tapOn: 我的
+- assertVisible: 轻舟记得这些
+- tapOn:
+    text: 新增记忆
+- tapOn: "例如：不喜欢一天换很多家酒店"
+- inputText: "偏爱安静、有设计感的小酒店"
+- tapOn: 保存记忆
+- assertVisible: "偏爱安静、有设计感的小酒店"

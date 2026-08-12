@@ -22,6 +22,17 @@ qr_eval_report.md
 .superpowers/
 .claude/
 .agents/
+mobile-app/node_modules/
+mobile-app/ios/Pods/
+mobile-app/ios/build/
+mobile-app/android/.gradle/
+mobile-app/android/app/build/
+mobile-prototype/node_modules/
+mobile-prototype/test-results/
+mobile-prototype/playwright-report/
+data/langgraph-checkpoints.db
+data/langgraph-checkpoints.db-shm
+data/langgraph-checkpoints.db-wal
 travel_plans.db
 itineraries.db
 .gitignore

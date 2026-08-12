@@ -1,0 +1,3 @@
+AMAP_IOS_KEY =
+#include? "Secrets.xcconfig"
+#include? "../Pods/Target Support Files/Pods-Qingzhou/Pods-Qingzhou.release.xcconfig"

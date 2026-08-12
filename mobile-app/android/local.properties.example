@@ -1,0 +1,3 @@
+## Copy this file to android/local.properties. Never commit the real key.
+sdk.dir=/absolute/path/to/Android/sdk
+AMAP_ANDROID_KEY=replace_with_your_android_key

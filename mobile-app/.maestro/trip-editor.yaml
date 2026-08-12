@@ -1,0 +1,26 @@
+appId: com.qingzhou.travel
+name: 轻舟行程地图与编辑
+---
+- launchApp
+- runFlow:
+    when:
+      visible:
+        id: enter-demo
+    commands:
+      - tapOn:
+          id: enter-demo
+- tapOn: 行程
+- tapOn: 滇西北一周深度漫游
+- assertVisible: 推荐地点
+- tapOn:
+    id: open-trip-editor
+- assertVisible: 编辑行程
+- tapOn:
+    id: optimize-route
+- assertVisible: 已按地理位置优化顺序，可点击撤销恢复。
+- tapOn:
+    id: add-stop
+- assertVisible: 添加地点
+- tapOn: 沙溪古镇
+- tapOn:
+    id: save-trip

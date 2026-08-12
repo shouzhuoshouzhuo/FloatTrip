@@ -1,0 +1,100 @@
+name: Qingzhou Mobile CI
+
+on:
+  pull_request:
+    paths:
+      - "mobile-app/**"
+      - "app/**"
+      - "requirements.txt"
+      - ".github/workflows/mobile-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile-app/**"
+      - "app/**"
+
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run bundle:check
+
+  api-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+      - run: python -m pip install -r requirements.txt
+      - run: npm ci
+        working-directory: mobile-app
+      - run: python scripts/export_openapi.py
+        working-directory: mobile-app
+      - run: npx openapi-typescript openapi.json -o src/api/schema.ts
+        working-directory: mobile-app
+      - run: git diff --exit-code -- mobile-app/src/api/schema.ts
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - run: npm ci
+      - run: chmod +x android/gradlew
+      - run: ./gradlew assembleDebug
+        working-directory: mobile-app/android
+        env:
+          AMAP_ANDROID_KEY: ${{ secrets.AMAP_ANDROID_DEBUG_KEY }}
+
+  ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+      - run: npm ci
+      - run: bundle install
+      - run: bundle exec pod install
+        working-directory: mobile-app/ios
+      - run: xcodebuild -workspace Qingzhou.xcworkspace -scheme Qingzhou -configuration Debug -sdk iphonesimulator -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+        working-directory: mobile-app/ios
+        env:
+          AMAP_IOS_KEY: ${{ secrets.AMAP_IOS_DEBUG_KEY }}
