@@ -14,7 +14,7 @@
 [![Eval: pass@k](https://img.shields.io/badge/Eval-pass%40k%20%2F%20pass%5Ek-brightgreen)](tests/EVAL_GUIDE.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[产品演示](#demo) · [移动端 App](#mobile-app) · [快速开始](#quick-start) · [系统架构](#architecture) · [评测体系](#evaluation)
+[项目介绍](docs/project-introduction.md) · [项目图集](#project-gallery) · [产品演示](#demo) · [移动端 App](#mobile-app) · [快速开始](#quick-start) · [系统架构](#architecture) · [评测体系](#evaluation)
 
 </div>
 
@@ -34,6 +34,49 @@
 所有景点与餐厅数据均来自**高德真实 POI**；长期记忆具有来源、作用域和审计记录，不会在用户不知情的情况下静默覆盖当前需求。
 
 > 完整 Agent 评测方法、指标与运行方式见 [`tests/EVAL_GUIDE.md`](tests/EVAL_GUIDE.md)。
+
+---
+
+<a id="project-gallery"></a>
+
+## 🖼️ 六张图认识 FloatTrip
+
+从旅行规划的真实痛点，到 Multi-Agent 职责分工、可控旅行记忆、地图行程与开源协作：
+
+<table>
+  <tr>
+    <td width="33.33%" valign="top">
+      <img src="./xiaohongshu-floattrip/output/01-cover.png" alt="FloatTrip 开源 Multi-Agent 旅行规划项目封面" width="100%" />
+      <p align="center"><b>不是生成攻略，而是组织 Agent 规划旅行</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <img src="./xiaohongshu-floattrip/output/02-why-multi-agent.png" alt="为什么旅行规划不应该交给一个万能 Agent" width="100%" />
+      <p align="center"><b>为什么需要 Multi-Agent</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <img src="./xiaohongshu-floattrip/output/03-agent-orchestration.png" alt="FloatTrip Planner Reviewer 与 Time Check Agent 编排" width="100%" />
+      <p align="center"><b>生成、审阅与时间核验分工协作</b></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="33.33%" valign="top">
+      <img src="./xiaohongshu-floattrip/output/04-personal-memory.png" alt="FloatTrip 可查看可修改可忘记的旅行记忆" width="100%" />
+      <p align="center"><b>记住偏好，但记忆始终由用户控制</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <img src="./xiaohongshu-floattrip/output/05-editable-itinerary.png" alt="FloatTrip 地图联动与可编辑旅行行程" width="100%" />
+      <p align="center"><b>真实 POI、地图联动与持续编辑</b></p>
+    </td>
+    <td width="33.33%" valign="top">
+      <a href="https://github.com/shouzhuoshouzhuo/FloatTrip">
+        <img src="./xiaohongshu-floattrip/output/06-open-source.png" alt="FloatTrip 开源项目 Star Issue 与贡献邀请" width="100%" />
+      </a>
+      <p align="center"><b>欢迎 Star、提 Issue 与参与贡献</b></p>
+    </td>
+  </tr>
+</table>
+
+> 喜欢这个方向？欢迎为 [FloatTrip 点亮 Star](https://github.com/shouzhuoshouzhuo/FloatTrip)、提交 [Issue](https://github.com/shouzhuoshouzhuo/FloatTrip/issues)，或通过 [Pull Request](https://github.com/shouzhuoshouzhuo/FloatTrip/pulls) 参与贡献。
 
 ---
 
